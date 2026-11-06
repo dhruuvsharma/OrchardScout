@@ -60,6 +60,10 @@ def main() -> None:
     ap.add_argument("--video-every", type=int, default=2)
     ap.add_argument("--tag", default="")
     ap.add_argument("--debug", action="store_true")
+    ap.add_argument("--no-correct", action="store_true", help="no landmark/compass/lattice")
+    ap.add_argument("--no-compass", action="store_true")
+    ap.add_argument("--no-lattice", action="store_true")
+    ap.add_argument("--no-landmark", action="store_true", help="no landmark re-sighting")
     ap.add_argument("--out", default="runs/explore")
     args = ap.parse_args()
     out = Path(args.out)
@@ -78,7 +82,13 @@ def main() -> None:
         depth_fn = MonoDepth(input_size=args.input_size)
     else:
         depth_fn = lambda rgb: sim.depth_gt()  # noqa: E731  diagnostic only
-    agent = Agent(sim.K, sim.cam_cfg.pitch_deg, sim.drone_cfg.altitude, depth_fn, AgentConfig(),
+    cfg = AgentConfig()
+    cfg.trunk.correct = not (args.no_correct or args.no_landmark)
+    if args.no_correct or args.no_compass:
+        cfg.trunk.compass_gain = 0.0
+    if args.no_correct or args.no_lattice:
+        cfg.trunk.lattice_gain = 0.0
+    agent = Agent(sim.K, sim.cam_cfg.pitch_deg, sim.drone_cfg.altitude, depth_fn, cfg,
                   seed=args.seed)
     explorer = Explorer()
     explorer.debug = args.debug
@@ -110,7 +120,8 @@ def main() -> None:
         traj_est.append(res.T_M_cam)
 
         trunks = agent.mapper.trunks.confirmed()
-        v, w = explorer.command(res.T_M_cam, agent.mapper.grid, trunks,
+        v, w = explorer.command(res.T_M_cam, agent.mapper.grid,
+                                agent.mapper.trunks.provisional(explorer.cfg.relevance_min_obs),
                                 agent.mapper.trunks.provisional())
 
         est = None
@@ -119,6 +130,15 @@ def main() -> None:
             hist.append({"step": step, "distance_m": distance,
                          "coverage": coverage(agent.mapper.grid, layout, R, t),
                          "n_trunks": int(len(trunks)), **(est.to_dict() if est else {})})
+        if args.debug and step % 50 == 0 and R is not None:
+            pe = res.T_M_cam[:2, 3] @ R.T + t
+            fe, fg = res.T_M_cam[:2, 2] @ R.T, T_W[:2, 2]
+            yerr = np.degrees(np.arctan2(fe[0] * fg[1] - fe[1] * fg[0], fe @ fg))
+            m = agent.mapper
+            print(f"  dbg {step}: xy err {np.linalg.norm(pe - T_W[:2, 3]):.2f} m, yaw err "
+                  f"{-yerr:+.1f} deg, compass n={len(m.compass_log)} last "
+                  f"{(m.compass_log or [0])[-1]:+.1f}, lattice n={len(m.lattice_log)} last "
+                  f"{(m.lattice_log or [0])[-1]:+.2f}, mode {explorer.mode}", flush=True)
         if step % 200 == 0:
             h = hist[-1]
             print(f"step {step:5d} {explorer.mode:6s} dist {distance:6.1f} m cov "

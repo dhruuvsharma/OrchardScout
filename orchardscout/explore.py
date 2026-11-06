@@ -37,6 +37,12 @@ class ExploreConfig:
     inflate: float = 0.5  # m: drone radius 0.18 + safety margin
     trunk_radius: float = 0.25  # m drawn around each mapped trunk before inflation
     unknown_cost: float = 2.5
+    # Open field is the worst place for monocular depth and odometry (featureless grass,
+    # no rows for drift correction), so cells far from every mapped trunk cost more and
+    # paths stay in the alleys and headlands.
+    far_from_trees: float = 3.0  # m
+    far_cost: float = 2.5  # multiplier
+    relevance_min_obs: int = 8  # sightings before a tree makes nearby frontiers relevant
     min_frontier_cells: int = 3
     relevance_radius: float = 5.0  # m from a mapped trunk
     start_radius: float = 10.0  # m around the start, before any tree is mapped
@@ -114,9 +120,12 @@ class Explorer:
         origin = grid.to_world(np.array([i0, j0])) - 0.5 * grid.cfg.resolution
         return obstacle, free, unknown, origin
 
-    def _graph(self, obstacle: np.ndarray, free: np.ndarray) -> csr_matrix:
+    def _graph(self, obstacle: np.ndarray, free: np.ndarray,
+               far: np.ndarray | None = None) -> csr_matrix:
         H, W = obstacle.shape
         cost = np.where(free, 1.0, self.cfg.unknown_cost)
+        if far is not None:
+            cost = cost * np.where(far, self.cfg.far_cost, 1.0)
         idx = np.arange(H * W).reshape(H, W)
         rows, cols, wts = [], [], []
         for di, dj in ((0, 1), (1, 0), (1, 1), (1, -1)):
@@ -160,7 +169,11 @@ class Explorer:
         if obstacle[start[0], start[1]]:  # inside an inflated obstacle: use nearest open cell
             d, (ii, jj) = ndimage.distance_transform_edt(obstacle, return_indices=True)
             start = np.array([ii[start[0], start[1]], jj[start[0], start[1]]])
-        G = self._graph(obstacle, free)
+        far = None
+        if len(obstacles):
+            ctr = to_xy(np.argwhere(np.ones((H, W), bool)))
+            far = (cKDTree(obstacles).query(ctr)[0] > c.far_from_trees).reshape(H, W)
+        G = self._graph(obstacle, free, far)
         dist, pred = dijkstra(G, indices=start[0] * W + start[1], return_predecessors=True)
         dist = dist.reshape(H, W)
 
@@ -310,7 +323,12 @@ class Explorer:
                     return np.zeros(2), 0.0
                 if new is not None:
                     remaining = self._remaining_cost(xy)
-                    if (self.plan is None or self.follower.done or blocked
+                    # the old goal is obsolete once no relevant frontier is left near it
+                    obsolete = self.plan is not None and (
+                        len(self.last_frontiers) == 0
+                        or np.min(np.linalg.norm(self.last_frontiers - self.plan.goal, axis=1))
+                        > 1.0)
+                    if (self.plan is None or self.follower.done or blocked or obsolete
                             or new.cost < c.switch_ratio * remaining
                             or np.linalg.norm(new.goal - self.plan.goal) < 1.0):
                         self.plan = new

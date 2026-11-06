@@ -23,6 +23,7 @@ class Frame:
     depth: np.ndarray  # metric (rescaled) planar depth, m
     sky: np.ndarray  # bool
     feature_mask: np.ndarray  # bool: pixels usable for VO features
+    map_mask: np.ndarray  # bool: pixels usable for mapping
     up_cam: np.ndarray | None  # ground normal in the camera frame, if the fit was accepted
     scale: float  # factor applied to the raw depth
 
@@ -76,6 +77,16 @@ class Perception:
                 plane_z < self.snap_max_range) & ~sky
             depth = np.where(on_ground, plane_z, depth).astype(np.float32)
         depth[sky] = np.inf
-        feat = ~sky & ~depth_edge_mask(np.where(sky, 1e3, depth))
+        valid = ~sky & ~depth_edge_mask(np.where(sky, 1e3, depth))
+        feat = valid.copy()
+        if up is not None:
+            # "Rising ground": over open, featureless grass the network bends the ground
+            # upwards beyond a few metres. Those points have the wrong depth, so visual
+            # odometry must not use them (mapping may: it only frees space up to them).
+            rays = self._pixel_rays(*depth.shape)
+            height = (rays * np.where(np.isfinite(depth), depth, 0.0)[..., None]) @ up
+            height = height + self.altitude
+            rising = (height > 0.12) & (height < 0.6) & (depth > 2.5)
+            feat &= ~rising
         gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-        return Frame(rgb, gray, depth, sky, feat, up, scale)
+        return Frame(rgb, gray, depth, sky, feat, valid, up, scale)

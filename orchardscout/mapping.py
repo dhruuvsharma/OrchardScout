@@ -168,10 +168,16 @@ class TrunkConfig:
     compass_gain: float = 0.1  # fraction of the heading error removed per frame
     compass_min_landmarks: int = 25  # confirmed trees needed to freeze the orientation
     compass_window: int = 15  # frames of recent detections used for the local estimate
-    compass_min_trees: int = 6
-    # modulo 90 deg, so up to ~40 deg is unambiguous; a big error after a turn must be
-    # recoverable (12 deg was too tight: one bad headland turn was never corrected)
-    compass_max_err_deg: float = 35.0
+    compass_min_trees: int = 4
+    # Line-based local estimates are precise, so a moderate window suffices; a wide window
+    # (35 deg) with noisy neighbour-direction estimates let wrong corrections through.
+    compass_max_err_deg: float = 15.0
+    # Row lattice: rows lie at a fixed spacing (measured inside single frames), so every
+    # row line seen in a frame must fall on that lattice. The residual (modulo the
+    # spacing) corrects the sideways position, as the compass corrects the heading.
+    lattice_gain: float = 0.15
+    lattice_min_samples: int = 20  # local row-spacing measurements before freezing
+    lattice_max_spread: float = 0.25  # residuals of lines in one frame must agree (x spacing)
 
 
 class TrunkMap:
@@ -363,15 +369,22 @@ class Mapper:
         self.local_tree_spacing: list[float] = []
         self._row_axis: int | None = None
         self.frames = 0
+        self.lattice_phase: float | None = None  # cross-row offset of the row lattice (m)
+        self.lattice_log: list[float] = []
 
-    def _measure_local_spacing(self, dets: np.ndarray) -> None:
+    def _row_rotation(self) -> np.ndarray:
+        a = np.deg2rad(self.row_theta)
+        return np.array([[np.cos(a), np.sin(a)], [-np.sin(a), np.cos(a)]])
+
+    def _measure_local_spacing(self, dets: np.ndarray) -> list[float]:
         """Row and tree spacing from the trunks seen in one frame (within ~5 m).
 
         Positions within a single frame do not depend on accumulated drift, so these
-        measurements stay accurate however far the drone has flown.
+        measurements stay accurate however far the drone has flown. Returns the cross-row
+        coordinates of the row lines seen in this frame.
         """
         if self.row_theta is None or len(dets) < 3:
-            return
+            return []
         a = np.deg2rad(self.row_theta)
         R = np.array([[np.cos(a), np.sin(a)], [-np.sin(a), np.cos(a)]])
         uv = dets @ R.T
@@ -386,10 +399,37 @@ class Mapper:
                 self.local_tree_spacing.extend(du[(du > 1.0) & (du < 5.0)].tolist())
         dc = np.diff(sorted(centres))
         self.local_row_spacing.extend(dc[(dc > 2.0) & (dc < 8.0)].tolist())
+        return centres
+
+    def _lattice(self, centres: list[float]) -> float:
+        """Sideways correction (m, along the cross-row axis) from the row lattice."""
+        tc = self.trunks.cfg
+        if tc.lattice_gain <= 0 or self.row_theta is None:
+            return 0.0
+        if len(self.local_row_spacing) < tc.lattice_min_samples:
+            return 0.0
+        sp = float(np.median(self.local_row_spacing))
+        if self.lattice_phase is None:  # freeze from the trees mapped so far
+            lm = self.trunks.confirmed()
+            if len(lm) < tc.compass_min_landmarks:
+                return 0.0
+            v = (lm @ self._row_rotation().T)[:, 1 - self._row_axis]
+            ang = 2 * np.pi * v / sp
+            self.lattice_phase = float(np.arctan2(np.sin(ang).mean(), np.cos(ang).mean())
+                                       * sp / (2 * np.pi))
+            return 0.0
+        if not centres:
+            return 0.0
+        res = ((np.asarray(centres) - self.lattice_phase + sp / 2) % sp) - sp / 2
+        if len(res) > 1 and np.ptp(res) > tc.lattice_max_spread * sp:
+            return 0.0
+        r = float(np.mean(res))
+        self.lattice_log.append(r)
+        return -tc.lattice_gain * r
 
     def _compass(self, cam_xy: np.ndarray) -> float:
         """Heading correction (rad) from the row compass; 0 if not applicable."""
-        from .size_estimation import grid_orientation
+        from .size_estimation import line_orientation
 
         tc = self.trunks.cfg
         if tc.compass_gain <= 0:
@@ -400,7 +440,9 @@ class Mapper:
         if len(pts) < tc.compass_min_trees:
             return 0.0
         try:
-            local = grid_orientation(pts)
+            # straight lines of >= 3 trees (rows, or row ends at a headland); scattered or
+            # ghost detections are ignored, so the estimate is precise to ~1-2 deg
+            local, _ = line_orientation(pts, seed=self.frames)
         except ValueError:
             return 0.0
         err = (local - self.row_theta + 45.0) % 90.0 - 45.0
@@ -457,7 +499,16 @@ class Mapper:
                 dets = rotate_about(dets, cam_xy, ang)
                 for k in range(len(self.recent)):
                     self.recent[k] = rotate_about(self.recent[k], cam_xy, ang)
-        self._measure_local_spacing(dets)
+        centres = self._measure_local_spacing(dets)
+        if correct:
+            dv = self._lattice(centres)
+            if dv != 0.0:
+                shift = dv * self._row_rotation()[1 - self._row_axis]  # cross-row unit vector
+                Cl = np.eye(4)
+                Cl[:2, 3] = shift
+                C, T = Cl @ C, Cl @ T
+                dets = dets + shift
+                cam_xy = T[:2, 3].copy()
         self.last_detections = dets
         self.trunks.add(dets, cam_xy)
 

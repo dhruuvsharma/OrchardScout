@@ -73,7 +73,7 @@ class Agent:
             self.T_M_cam = res.T_M_cam
         t2 = time.perf_counter()
         pose = T_override if T_override is not None else self.T_M_cam
-        C = self.mapper.update(frame.depth, frame.feature_mask, pose,
+        C = self.mapper.update(frame.depth, frame.map_mask, pose,
                                correct=T_override is None)
         if T_override is None and not np.allclose(C, np.eye(4)):
             self.vo.apply_correction(C)  # landmark-based drift correction

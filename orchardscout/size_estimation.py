@@ -61,6 +61,56 @@ def grid_orientation(xy: np.ndarray, k: int = 4, max_dist: float = 8.0) -> float
     return float(mean % 90.0)
 
 
+def line_orientation(
+    xy: np.ndarray, tol: float = 0.25, min_inliers: int = 3, min_len: float = 2.5,
+    max_lines: int = 3, seed: int = 0,
+) -> tuple[float, int]:
+    """Grid angle (degrees, modulo 90) from straight lines of trees, and the trees used.
+
+    RANSAC on pairs of trees finds lines with >= ``min_inliers`` trees within ``tol``
+    of the line; each line's direction is refined by PCA on its inliers. Unlike nearest-
+    neighbour directions this ignores scattered or ghost detections, so it is precise
+    enough (~1-2 deg) to correct heading from a handful of trees. Raises ValueError if no
+    line is found.
+    """
+    pts = np.asarray(xy, dtype=np.float64)
+    rng = np.random.default_rng(seed)
+    angles, weights, used = [], [], 0
+    for _ in range(max_lines):
+        if len(pts) < min_inliers:
+            break
+        best = None
+        n = len(pts)
+        pairs = rng.integers(0, n, size=(min(200, n * n), 2))
+        for i, j in pairs:
+            d = pts[j] - pts[i]
+            L = np.linalg.norm(d)
+            if i == j or L < 1.0:
+                continue
+            nrm = np.array([-d[1], d[0]]) / L
+            inl = np.abs((pts - pts[i]) @ nrm) < tol
+            if best is None or inl.sum() > best.sum():
+                best = inl
+        if best is None or best.sum() < min_inliers:
+            break
+        q = pts[best]
+        c = q - q.mean(axis=0)
+        _, _, vt = np.linalg.svd(c, full_matrices=False)
+        direction = vt[0]
+        if np.ptp(c @ direction) < min_len:
+            break
+        angles.append(np.degrees(np.arctan2(direction[1], direction[0])) % 90.0)
+        weights.append(best.sum())
+        used += int(best.sum())
+        pts = pts[~best]
+    if not angles:
+        raise ValueError("no line of trees")
+    phi = np.deg2rad(np.array(angles) * 4.0)
+    w = np.array(weights, dtype=float)
+    mean = np.degrees(np.arctan2(np.sum(w * np.sin(phi)), np.sum(w * np.cos(phi)))) / 4.0
+    return float(mean % 90.0), used
+
+
 def find_lines(
     v: np.ndarray, sigma: float = 0.2, min_sep: float = 1.2, assign: float = 0.6,
     min_trees: int = 3,
