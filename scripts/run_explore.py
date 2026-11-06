@@ -122,7 +122,7 @@ def main() -> None:
         trunks = agent.mapper.trunks.confirmed()
         v, w = explorer.command(res.T_M_cam, agent.mapper.grid,
                                 agent.mapper.trunks.provisional(explorer.cfg.relevance_min_obs),
-                                agent.mapper.trunks.provisional())
+                                agent.mapper.trunks.provisional(3))
 
         est = None
         if step % 25 == 0 or explorer.done:
@@ -203,6 +203,7 @@ def main() -> None:
         "size": size_errors(est.to_dict(), gt) if est else None,
         "plans": explorer.n_plans,
         "safety_interventions": explorer.n_safety,
+        "fallback_plans": explorer.n_fallback,
         **agent.timing_summary(),
     }
     brief = {k: v for k, v in result.items() if k not in ("orchard", "estimate")}

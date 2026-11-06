@@ -55,6 +55,9 @@ class ExploreConfig:
     blacklist_radius: float = 1.5  # m around a goal that could not be reached
     window_margin: float = 12.0  # m around the seen area
     safety_radius: float = 0.45  # m: closer than this to a trunk centre -> back away
+    # When nothing is reachable (often a ghost trunk blocking an alley), replan with a
+    # thinner margin around confirmed trees only before declaring the rest unreachable.
+    fallback_inflate: float = 0.3
     lookahead_check: float = 0.9  # m of commanded motion checked for trunks each step
     path_check: float = 4.0  # m of the remaining path re-checked against trunks each step
     follower: FollowerConfig = field(
@@ -89,11 +92,14 @@ class Explorer:
         self.n_relevant = 0
         self.status = "running"
         self.n_safety = 0
+        self.n_fallback = 0
         self._force_replan = False
 
     # ------------------------------------------------------------ planning
-    def _planning_grid(self, grid: OccupancyGrid, trunks: np.ndarray):
+    def _planning_grid(self, grid: OccupancyGrid, trunks: np.ndarray,
+                       inflate: float | None = None, use_grid_occ: bool = True):
         c = self.cfg
+        inflate = c.inflate if inflate is None else inflate
         st = grid.state()
         seen = np.nonzero(grid.seen.any(axis=1))[0], np.nonzero(grid.seen.any(axis=0))[0]
         f = int(round(c.plan_res / grid.cfg.resolution))
@@ -103,13 +109,13 @@ class Explorer:
         i1 = i0 + (i1 - i0) // f * f
         j1 = j0 + (j1 - j0) // f * f
         sub = st[i0:i1, j0:j1]
-        occ = sub == grid.OCCUPIED
+        occ = (sub == grid.OCCUPIED) if use_grid_occ else np.zeros(sub.shape, bool)
         if len(trunks):
             cells = grid.disk_cells(trunks, c.trunk_radius) - [i0, j0]
             ok = ((cells[:, 0] >= 0) & (cells[:, 0] < occ.shape[0])
                   & (cells[:, 1] >= 0) & (cells[:, 1] < occ.shape[1]))
             occ[cells[ok, 0], cells[ok, 1]] = True
-        r = int(np.ceil(c.inflate / grid.cfg.resolution))
+        r = int(np.ceil(inflate / grid.cfg.resolution))
         yy, xx = np.mgrid[-r:r + 1, -r:r + 1]
         occ = ndimage.binary_dilation(occ, structure=(xx**2 + yy**2) <= r * r)
         H, W = occ.shape[0] // f, occ.shape[1] // f
@@ -144,9 +150,13 @@ class Explorer:
                                                      np.concatenate([c_, r]))), shape=(n, n))
 
     def _make_plan(self, xy: np.ndarray, grid: OccupancyGrid, trunks: np.ndarray,
-                   obstacles: np.ndarray) -> Plan | None:
+                   obstacles: np.ndarray, fallback: bool = False) -> Plan | None:
         c = self.cfg
-        obstacle, free, unknown, origin = self._planning_grid(grid, obstacles)
+        if fallback:
+            obstacle, free, unknown, origin = self._planning_grid(
+                grid, trunks, inflate=c.fallback_inflate, use_grid_occ=False)
+        else:
+            obstacle, free, unknown, origin = self._planning_grid(grid, obstacles)
         H, W = obstacle.shape
         res = c.plan_res
         to_cell = lambda p: np.floor((p - origin) / res).astype(int)  # noqa: E731
@@ -316,6 +326,13 @@ class Explorer:
             if need:
                 self._force_replan = False
                 new = self._make_plan(xy, grid, trunks, obstacles)
+                if new is None and self.n_relevant > 0:
+                    new = self._make_plan(xy, grid, trunks, obstacles, fallback=True)
+                    if new is None and self.blacklist:
+                        self.blacklist.clear()
+                        new = self._make_plan(xy, grid, trunks, obstacles, fallback=True)
+                    if new is not None:
+                        self.n_fallback += 1
                 if new is None and (self.plan is None or self.follower.done or blocked):
                     self.mode = self.DONE
                     # explored = nothing relevant left; otherwise what is left is unreachable
