@@ -29,13 +29,17 @@ def test_plan_goes_around_a_row_of_trunks_to_a_frontier():
 def test_no_relevant_frontier_means_explored():
     g = _grid_with_free_box(-5, 5, -5, 5)
     far_tree = np.array([[40.0, 40.0]] * 3) + np.arange(3)[:, None]
-    ex = Explorer(ExploreConfig(relevance_radius=3.0))
+    ex = Explorer(ExploreConfig(relevance_radius=3.0, final_spins=1))
     ex.mode = ex.FOLLOW
     T = np.eye(4)
     T[:3, 2] = [1.0, 0.0, 0.0]
-    for _ in range(3):
+    v, w = ex.command(T, g, far_tree, far_tree)
+    assert ex.mode == ex.SPIN and w > 0  # one last look around before finishing
+    for _ in range(200):
         ex.command(T, g, far_tree, far_tree)
-    assert ex.done and ex.status == "explored"
+        if ex.done:
+            break
+    assert ex.done and ex.status == "explored" and ex.n_final_spins == 1
 
 
 def test_safety_layer_backs_away_from_a_close_trunk():

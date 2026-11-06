@@ -204,6 +204,7 @@ def main() -> None:
         "plans": explorer.n_plans,
         "safety_interventions": explorer.n_safety,
         "fallback_plans": explorer.n_fallback,
+        "final_spins": explorer.n_final_spins,
         **agent.timing_summary(),
     }
     brief = {k: v for k, v in result.items() if k not in ("orchard", "estimate")}

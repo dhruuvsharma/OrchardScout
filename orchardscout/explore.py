@@ -42,7 +42,8 @@ class ExploreConfig:
     # paths stay in the alleys and headlands.
     far_from_trees: float = 3.0  # m
     far_cost: float = 2.5  # multiplier
-    relevance_min_obs: int = 8  # sightings before a tree makes nearby frontiers relevant
+    relevance_min_obs: int = 4  # sightings before a tree makes nearby frontiers relevant
+    final_spins: int = 3  # look around before declaring the orchard explored (at most)
     min_frontier_cells: int = 3
     relevance_radius: float = 5.0  # m from a mapped trunk
     start_radius: float = 10.0  # m around the start, before any tree is mapped
@@ -93,6 +94,7 @@ class Explorer:
         self.status = "running"
         self.n_safety = 0
         self.n_fallback = 0
+        self.n_final_spins = 0
         self._force_replan = False
 
     # ------------------------------------------------------------ planning
@@ -334,6 +336,12 @@ class Explorer:
                     if new is not None:
                         self.n_fallback += 1
                 if new is None and (self.plan is None or self.follower.done or blocked):
+                    if self.n_final_spins < c.final_spins:
+                        # nothing left to explore: look all around once more first, since
+                        # trees at the edge of earlier views may not be confirmed yet
+                        self.n_final_spins += 1
+                        self.mode, self.spun, self.plan = self.SPIN, 0.0, None
+                        return np.zeros(2), c.spin_rate
                     self.mode = self.DONE
                     # explored = nothing relevant left; otherwise what is left is unreachable
                     self.status = "explored" if self.n_relevant == 0 else "unreachable"
