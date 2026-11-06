@@ -24,8 +24,12 @@ from . import geometry as geo
 @dataclass
 class GroundPlaneConfig:
     altitude: float = 1.0  # m, nominal camera height above ground
-    band: float = 0.28  # bottom fraction of the image used for the fit
-    stride: int = 4  # pixel subsampling inside the band
+    # Bottom fraction of the image used for the fit. Narrow on purpose: the network
+    # compresses depth with distance even on flat ground, so a wide band bends the fitted
+    # plane and biases the scale (0.28 gave depth ~3-5 % too short at 0-4 m in flight,
+    # and visual odometry ~4 % too short; 0.12 gives ~0-2 %).
+    band: float = 0.12
+    stride: int = 3  # pixel subsampling inside the band
     iters: int = 150  # RANSAC iterations
     inlier_rel: float = 0.03  # inlier threshold as a fraction of the plane distance
     min_inlier_frac: float = 0.5
@@ -113,3 +117,4 @@ class GroundPlaneScale:
         if fit.ok:
             self.history.append(self.cfg.altitude / fit.distance)
         return float(np.median(self.history)) if self.history else float("nan")
+

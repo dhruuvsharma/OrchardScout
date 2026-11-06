@@ -37,6 +37,86 @@ def depth_errors_by_distance(
     return rows
 
 
+def heading(T: np.ndarray) -> float:
+    """Heading (rad) of a camera pose: its optical axis projected on the ground plane."""
+    f = T[:3, 2]
+    return float(np.arctan2(f[1], f[0]))
+
+
+def start_alignment_2d(T_M_c0: np.ndarray, T_W_c0: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(R, t) with world_xy = R @ map_xy + t, from the first pose only (x, y, heading).
+
+    The map frame is gravity-aligned, so this is the honest open-loop alignment: it uses
+    no information from later in the run.
+    """
+    dyaw = heading(T_W_c0) - heading(T_M_c0)
+    R = np.array([[np.cos(dyaw), -np.sin(dyaw)], [np.sin(dyaw), np.cos(dyaw)]])
+    t = T_W_c0[:2, 3] - R @ T_M_c0[:2, 3]
+    return R, t
+
+
+def match_points(est: np.ndarray, gt: np.ndarray, radius: float = 0.5) -> dict[str, float]:
+    """One-to-one nearest matching of estimated to true points within ``radius``."""
+    from scipy.spatial import cKDTree
+
+    if len(est) == 0 or len(gt) == 0:
+        return {"precision": 0.0, "recall": 0.0, "matched": 0, "mean_error_m": float("nan")}
+    d, j = cKDTree(gt).query(est, distance_upper_bound=radius)
+    used, errs = set(), []
+    for k in np.argsort(d):
+        if np.isfinite(d[k]) and j[k] not in used:
+            used.add(int(j[k]))
+            errs.append(d[k])
+    m = len(used)
+    return {
+        "precision": m / len(est),
+        "recall": m / len(gt),
+        "matched": m,
+        "n_est": int(len(est)),
+        "n_gt": int(len(gt)),
+        "mean_error_m": float(np.mean(errs)) if errs else float("nan"),
+    }
+
+
+def icp_2d(src: np.ndarray, dst: np.ndarray, iters: int = 20, radius: float = 1.0):
+    """Rigid 2-D alignment of point set ``src`` onto ``dst`` (nearest-neighbour ICP).
+
+    Used only to evaluate map *shape* (how well trees are placed relative to each other)
+    independently of where the drift happened. Returns (R, t) with dst ~ src @ R.T + t.
+    """
+    from scipy.spatial import cKDTree
+
+    R, t = np.eye(2), np.zeros(2)
+    tree = cKDTree(dst)
+    for _ in range(iters):
+        cur = src @ R.T + t
+        d, j = tree.query(cur, distance_upper_bound=radius)
+        ok = np.isfinite(d)
+        if ok.sum() < 3:
+            break
+        a, b = cur[ok], dst[j[ok]]
+        ma, mb = a.mean(0), b.mean(0)
+        H = (a - ma).T @ (b - mb)
+        ang = np.arctan2(H[0, 1] - H[1, 0], H[0, 0] + H[1, 1])
+        dR = np.array([[np.cos(ang), -np.sin(ang)], [np.sin(ang), np.cos(ang)]])
+        R, t = dR @ R, dR @ t + mb - dR @ ma
+    return R, t
+
+
+def size_errors(est: dict, gt: dict) -> dict[str, float]:
+    """Compare an orchard estimate with the layout's ground truth."""
+    out = {}
+    for k in ("length_m", "width_m", "row_spacing_m", "tree_spacing_m", "area_m2"):
+        e, g = est.get(k), gt.get(k)
+        if e is not None and g:
+            out[f"{k}_est"] = e
+            out[f"{k}_true"] = g
+            out[f"{k}_err_pct"] = 100.0 * (e - g) / g
+    out["n_rows_est"] = est.get("n_rows")
+    out["n_rows_true"] = gt.get("n_rows")
+    return out
+
+
 def umeyama(src: np.ndarray, dst: np.ndarray, with_scale: bool = False):
     """Least-squares similarity transform dst ~ s * R @ src + t for (N, 3) point sets."""
     mu_s, mu_d = src.mean(0), dst.mean(0)

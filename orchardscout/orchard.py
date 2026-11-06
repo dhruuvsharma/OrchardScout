@@ -36,6 +36,7 @@ class OrchardConfig:
     row_length: tuple[float, float] = (20.0, 120.0)  # m, planted length of each row
     row_spacing: tuple[float, float] = (3.0, 6.0)  # m between row centre lines
     tree_spacing: tuple[float, float] = (1.5, 4.0)  # m between trees in a row
+    max_tree_to_row_ratio: float = 0.8  # tree spacing <= 0.8 x row spacing
     trunk_radius: tuple[float, float] = (0.07, 0.15)  # m
     canopy_base: tuple[float, float] = (1.7, 2.3)  # m, height of the lowest leaves
     missing_prob: float = 0.05  # chance that a planting position is empty
@@ -93,9 +94,11 @@ class OrchardLayout:
             "n_trees": self.n_trees,
             "row_spacing_m": round(self.row_spacing, 3),
             "tree_spacing_m": round(self.tree_spacing, 3),
-            "length_m": round(xmax - xmin, 3),  # along the rows
-            "width_m": round(ymax - ymin, 3),  # across the rows
-            "area_m2": round((xmax - xmin) * (ymax - ymin), 2),
+            "length_m": round(xmax - xmin, 3),  # along the rows, end trunk to end trunk
+            # across the rows, between the outermost row centre lines (as planted)
+            "width_m": round(float(np.ptp(self.row_y[rows_present])), 3),
+            "width_trunks_m": round(ymax - ymin, 3),  # trunk-centre extent, incl. jitter
+            "area_m2": round((xmax - xmin) * float(np.ptp(self.row_y[rows_present])), 2),
             "bbox_xyxy": [round(v, 3) for v in (xmin, ymin, xmax, ymax)],
             "canopy_base_m": round(self.canopy_base, 3),
             "min_canopy_z_m": round(self.min_canopy_z(), 3),
@@ -131,7 +134,9 @@ def generate_layout(
     n_rows = int(rng.integers(cfg.n_rows[0], cfg.n_rows[1] + 1))
     row_length = float(rng.uniform(*cfg.row_length))
     row_spacing = float(rng.uniform(*cfg.row_spacing))
-    tree_spacing = float(rng.uniform(*cfg.tree_spacing))
+    # In a planted orchard trees within a row are closer than the rows are apart.
+    tree_hi = min(cfg.tree_spacing[1], cfg.max_tree_to_row_ratio * row_spacing)
+    tree_spacing = float(rng.uniform(cfg.tree_spacing[0], max(tree_hi, cfg.tree_spacing[0])))
     trunk_r_mean = float(rng.uniform(*cfg.trunk_radius))
     base_mean = float(rng.uniform(*cfg.canopy_base))
     crown_r_mean = float(np.clip(rng.uniform(0.32, 0.42) * row_spacing, 0.9, 2.2))

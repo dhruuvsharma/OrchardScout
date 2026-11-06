@@ -19,6 +19,32 @@ _MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 _STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 
+class CachedDepth:
+    """Per-frame disk cache around a depth function, for deterministic scripted flights.
+
+    When the flight is steered with simulator ground truth, the same frames come back on
+    every run, so expensive network depth can be computed once and reused while other
+    parts of the pipeline are being compared. Stored as float16 .npy files.
+    """
+
+    def __init__(self, fn, cache_dir) -> None:
+        from pathlib import Path
+
+        self.fn = fn
+        self.dir = Path(cache_dir)
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.i = 0
+
+    def __call__(self, rgb: np.ndarray) -> np.ndarray:
+        f = self.dir / f"{self.i:05d}.npy"
+        self.i += 1
+        if f.exists():
+            return np.load(f).astype(np.float32)
+        d = self.fn(rgb).astype(np.float16)
+        np.save(f, d)
+        return d.astype(np.float32)
+
+
 class MonoDepth:
     """Wraps a metric monocular depth network: ``depth_m = MonoDepth()(rgb_uint8)``."""
 

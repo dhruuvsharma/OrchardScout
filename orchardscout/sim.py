@@ -3,8 +3,9 @@
 Flight model (deliberately simple, stated in the README): a velocity-commanded,
 acceleration-limited body with yaw, held at a fixed altitude below the canopy by its
 flight controller. Body roll and pitch follow the commanded acceleration (small-angle
-multirotor approximation) plus a little noise, so the camera does not move unrealistically
-smoothly. Collisions are checked exactly against the trunk cylinders and crown ellipsoids.
+multirotor approximation) through a first-order attitude lag, plus a little noise, so the
+camera does not move unrealistically smoothly. Collisions are checked exactly against the
+trunk cylinders and crown ellipsoids.
 
 The agent may only use :meth:`OrchardSim.rgb`. Everything else (ground-truth depth,
 ground-truth pose, the layout) exists for evaluation and visualisation.
@@ -42,6 +43,7 @@ class DroneConfig:
     max_yaw_rate_deg: float = 60.0
     dt: float = 0.1  # s per step = camera period (10 Hz)
     tilt_from_accel: bool = True
+    attitude_tau: float = 0.25  # s, first-order lag of roll/pitch (attitude loop)
     attitude_noise_deg: float = 0.3
 
 
@@ -234,8 +236,11 @@ class OrchardSim:
             a_fwd = c * acc[0] + si * acc[1]
             a_left = -si * acc[0] + c * acc[1]
             noise = np.deg2rad(cfg.attitude_noise_deg)
-            s.pitch = float(np.arctan2(a_fwd, GRAVITY) + self.rng.normal(0.0, noise))
-            s.roll = float(-np.arctan2(a_left, GRAVITY) + self.rng.normal(0.0, noise))
+            k = 1.0 - np.exp(-dt / cfg.attitude_tau) if cfg.attitude_tau > 0 else 1.0
+            pitch_target = np.arctan2(a_fwd, GRAVITY)
+            roll_target = -np.arctan2(a_left, GRAVITY)
+            s.pitch = float(s.pitch + k * (pitch_target - s.pitch) + self.rng.normal(0.0, noise))
+            s.roll = float(s.roll + k * (roll_target - s.roll) + self.rng.normal(0.0, noise))
 
         hit = self.collision_at(new_pos)
         if hit is None:
