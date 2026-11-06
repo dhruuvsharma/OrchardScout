@@ -155,6 +155,22 @@ def _in_line_spacing(u: np.ndarray, lines: list[np.ndarray]) -> float:
     return float(np.median(d)) if len(d) else np.inf
 
 
+def decide_row_axis(xy_rot: np.ndarray) -> tuple[int, float]:
+    """Which axis (0 or 1) of grid-aligned points the rows run along, and how clear it is.
+
+    Trees group into lines along both grid axes; rows are the lines with the smaller
+    spacing between neighbouring trees. Returns (axis, ratio) with ratio = smaller / larger
+    spacing (close to 1 means the two are hard to tell apart).
+    """
+    s = []
+    for along in (0, 1):
+        lines = find_lines(xy_rot[:, 1 - along])
+        s.append(_in_line_spacing(xy_rot[:, along], lines))
+    axis = int(np.argmin(s))
+    hi = max(s)
+    return axis, (min(s) / hi if np.isfinite(hi) and hi > 0 else 1.0)
+
+
 def estimate_orchard(
     xy: np.ndarray,
     local_row_spacing: list[float] | None = None,
@@ -178,7 +194,8 @@ def estimate_orchard(
     # With a locally measured row spacing, two peaks closer than 0.6 x that spacing are the
     # same row mapped twice (sideways drift), not two rows.
     local_ok = local_row_spacing is not None and len(local_row_spacing) >= min_local
-    min_sep = max(1.2, 0.6 * float(np.median(local_row_spacing))) if local_ok else 1.2
+    local_rs = float(np.median(local_row_spacing)) if local_ok else float("nan")
+    min_sep = max(1.2, 0.6 * local_rs) if local_ok else 1.2
     assign = max(0.6, 0.45 * min_sep)  # trees this close to a row line belong to it
     best = None
     for alt in (theta, theta + np.pi / 2):  # try both grid axes as the row direction
@@ -201,8 +218,12 @@ def estimate_orchard(
     v0, v1 = centres.min(), centres.max()
     width_map = float(v1 - v0)
     width, source = width_map, "map"
-    if local_row_spacing is not None and len(local_row_spacing) >= min_local:
-        row_spacing = float(np.median(local_row_spacing))
+    # use the local spacing only if it agrees with the map (a wrong row axis while mapping
+    # would have measured tree spacing instead)
+    agrees = local_ok and (not np.isfinite(row_spacing)
+                           or abs(local_rs - row_spacing) <= 0.3 * row_spacing)
+    if agrees:
+        row_spacing = local_rs
         width, source = (len(lines) - 1) * row_spacing, "local"
         vc = 0.5 * (v0 + v1)
         v0, v1 = vc - 0.5 * width, vc + 0.5 * width

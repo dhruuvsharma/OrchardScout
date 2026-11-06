@@ -178,6 +178,13 @@ class TrunkConfig:
     lattice_gain: float = 0.15
     lattice_min_samples: int = 20  # local row-spacing measurements before freezing
     lattice_max_spread: float = 0.25  # residuals of lines in one frame must agree (x spacing)
+    # Spacing is measured from trunks seen within ``close_range`` over a short window of
+    # frames (odometry is accurate over seconds). Monocular depth compresses beyond ~4 m,
+    # and in a wide alley both rows only fit in the image from ~4.5 m away, which biased
+    # single-frame spacing by -8 to -10 %. Spins and turns bring both rows close.
+    close_range: float = 4.0  # m
+    spacing_window: int = 120  # frames (12 s): a full look-around brings both rows close
+    spacing_every: int = 10  # frames between window measurements
 
 
 class TrunkMap:
@@ -367,16 +374,77 @@ class Mapper:
         # spacings measured inside single frames (immune to odometry drift)
         self.local_row_spacing: list[float] = []
         self.local_tree_spacing: list[float] = []
+        self.local_row_spacing_range: list[float] = []  # camera range behind each sample
+        self.frame_row_spacing: list[float] = []  # single-frame samples (fallback, biased)
+        self.frame_tree_spacing: list[float] = []
+        self._win: deque = deque(maxlen=self.trunks.cfg.spacing_window)
         self._row_axis: int | None = None
         self.frames = 0
         self.lattice_phase: float | None = None  # cross-row offset of the row lattice (m)
+        self._axis_final = False
+        self.axis_flips = 0
         self.lattice_log: list[float] = []
+
+    def _update_row_axis(self, lm: np.ndarray) -> None:
+        """Decide which grid axis the rows run along; revisit until it is clear.
+
+        When tree spacing is close to row spacing, an early map can suggest the wrong
+        axis; spacing statistics and the lattice measured along it are then discarded.
+        """
+        from .size_estimation import decide_row_axis
+
+        axis, ratio = decide_row_axis(lm @ self._row_rotation().T)
+        if axis != self._row_axis:
+            if self._row_axis is not None:
+                self.local_row_spacing.clear()
+                self.local_row_spacing_range.clear()
+                self.local_tree_spacing.clear()
+                self.frame_row_spacing.clear()
+                self.frame_tree_spacing.clear()
+                self.lattice_phase = None
+                self.axis_flips += 1
+            self._row_axis = axis
+            self.trunks.set_row_frame(self.row_theta, axis)
+        self._axis_final = len(lm) >= 80 and ratio < 0.85
 
     def _row_rotation(self) -> np.ndarray:
         a = np.deg2rad(self.row_theta)
         return np.array([[np.cos(a), np.sin(a)], [-np.sin(a), np.cos(a)]])
 
-    def _measure_local_spacing(self, dets: np.ndarray) -> list[float]:
+    def _measure_window_spacing(self) -> None:
+        """Row/tree spacing from close-range trunks gathered over the last few seconds."""
+        tc = self.trunks.cfg
+        if self.row_theta is None or not self._win:
+            return
+        pts = [d[r <= tc.close_range] for d, r in self._win]
+        pts = np.vstack([p for p in pts if len(p)]) if any(len(p) for p in pts) else None
+        if pts is None or len(pts) < 3:
+            return
+        pts = merge_points(pts, 0.35)
+        uv = pts @ self._row_rotation().T
+        u, v = uv[:, self._row_axis], uv[:, 1 - self._row_axis]
+        order = np.argsort(v)
+        groups = [g for g in np.split(order, np.nonzero(np.diff(v[order]) > 1.0)[0] + 1)
+                  if len(g) >= 2]
+        centres = sorted(float(np.median(v[g])) for g in groups)
+        dc = np.diff(centres)
+        self.local_row_spacing.extend(dc[(dc > 2.0) & (dc < 8.0)].tolist())
+        for g in groups:
+            du = np.diff(np.sort(u[g]))
+            self.local_tree_spacing.extend(du[(du > 1.0) & (du < 5.0)].tolist())
+
+    def row_spacing_samples(self) -> list[float]:
+        """Close-range windowed samples if there are enough, else single-frame ones."""
+        if len(self.local_row_spacing) >= self.trunks.cfg.lattice_min_samples:
+            return self.local_row_spacing
+        return self.frame_row_spacing
+
+    def tree_spacing_samples(self) -> list[float]:
+        if len(self.local_tree_spacing) >= self.trunks.cfg.lattice_min_samples:
+            return self.local_tree_spacing
+        return self.frame_tree_spacing
+
+    def _measure_local_spacing(self, dets: np.ndarray, cam_xy: np.ndarray) -> list[float]:
         """Row and tree spacing from the trunks seen in one frame (within ~5 m).
 
         Positions within a single frame do not depend on accumulated drift, so these
@@ -389,26 +457,32 @@ class Mapper:
         R = np.array([[np.cos(a), np.sin(a)], [-np.sin(a), np.cos(a)]])
         uv = dets @ R.T
         u, v = uv[:, self._row_axis], uv[:, 1 - self._row_axis]
+        rng = np.linalg.norm(dets - cam_xy, axis=1)
         order = np.argsort(v)
         groups = np.split(order, np.nonzero(np.diff(v[order]) > 1.0)[0] + 1)
-        centres = []
+        lines = []
         for g in groups:
             if len(g) >= 2:
-                centres.append(float(np.median(v[g])))
+                lines.append((float(np.median(v[g])), float(rng[g].mean())))
                 du = np.diff(np.sort(u[g]))
-                self.local_tree_spacing.extend(du[(du > 1.0) & (du < 5.0)].tolist())
-        dc = np.diff(sorted(centres))
-        self.local_row_spacing.extend(dc[(dc > 2.0) & (dc < 8.0)].tolist())
-        return centres
+                ok = (du > 1.0) & (du < 5.0)
+                self.frame_tree_spacing.extend(du[ok].tolist())
+        lines.sort()
+        for (c0, r0), (c1, r1) in zip(lines[:-1], lines[1:], strict=True):
+            if 2.0 < c1 - c0 < 8.0:
+                self.frame_row_spacing.append(c1 - c0)
+                self.local_row_spacing_range.append(max(r0, r1))
+        return [c for c, _ in lines]
 
     def _lattice(self, centres: list[float]) -> float:
         """Sideways correction (m, along the cross-row axis) from the row lattice."""
         tc = self.trunks.cfg
         if tc.lattice_gain <= 0 or self.row_theta is None:
             return 0.0
-        if len(self.local_row_spacing) < tc.lattice_min_samples:
+        samples = self.row_spacing_samples()
+        if len(samples) < tc.lattice_min_samples:
             return 0.0
-        sp = float(np.median(self.local_row_spacing))
+        sp = float(np.median(samples))
         if self.lattice_phase is None:  # freeze from the trees mapped so far
             lm = self.trunks.confirmed()
             if len(lm) < tc.compass_min_landmarks:
@@ -484,10 +558,9 @@ class Mapper:
                 from .size_estimation import grid_orientation
 
                 self.row_theta = grid_orientation(lm)  # frozen from the first mapped trees
-                a = np.deg2rad(self.row_theta)
-                R = np.array([[np.cos(a), np.sin(a)], [-np.sin(a), np.cos(a)]])
-                self._row_axis = TrunkMap._row_axis(lm @ R.T)
-                self.trunks.set_row_frame(self.row_theta, self._row_axis)
+                self._update_row_axis(lm)
+        elif not self._axis_final and self.frames % 100 == 0:
+            self._update_row_axis(self.trunks.confirmed())
         if correct:
             self.recent.append(dets.copy())
             ang = self._compass(cam_xy)
@@ -499,7 +572,10 @@ class Mapper:
                 dets = rotate_about(dets, cam_xy, ang)
                 for k in range(len(self.recent)):
                     self.recent[k] = rotate_about(self.recent[k], cam_xy, ang)
-        centres = self._measure_local_spacing(dets)
+        centres = self._measure_local_spacing(dets, cam_xy)
+        self._win.append((dets.copy(), np.linalg.norm(dets - cam_xy, axis=1)))
+        if self.frames % self.trunks.cfg.spacing_every == 0:
+            self._measure_window_spacing()
         if correct:
             dv = self._lattice(centres)
             if dv != 0.0:

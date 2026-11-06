@@ -205,6 +205,8 @@ def main() -> None:
         "safety_interventions": explorer.n_safety,
         "fallback_plans": explorer.n_fallback,
         "final_spins": explorer.n_final_spins,
+        "spacing_samples": {"close_range_window": len(agent.mapper.local_row_spacing),
+                            "single_frame": len(agent.mapper.frame_row_spacing)},
         **agent.timing_summary(),
     }
     brief = {k: v for k, v in result.items() if k not in ("orchard", "estimate")}

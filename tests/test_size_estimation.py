@@ -41,9 +41,13 @@ def test_ghost_detections_between_rows_do_not_add_rows():
 
 def test_local_spacing_sets_the_width():
     lay = generate_layout(4, "small")
-    est = estimate_orchard(lay.trunks[:, :2], local_row_spacing=[3.0] * 30)
+    s = 1.05 * lay.row_spacing  # a slightly different, locally measured spacing
+    est = estimate_orchard(lay.trunks[:, :2], local_row_spacing=[s] * 30)
     assert est.spacing_source == "local"
-    assert abs(est.width_m - (lay.n_rows - 1) * 3.0) < 1e-9
+    assert abs(est.width_m - (lay.n_rows - 1) * s) < 1e-9
+    # a local spacing that disagrees with the map (wrong axis while mapping) is ignored
+    est = estimate_orchard(lay.trunks[:, :2], local_row_spacing=[0.5 * lay.row_spacing] * 30)
+    assert est.spacing_source == "map"
 
 
 def test_find_lines():

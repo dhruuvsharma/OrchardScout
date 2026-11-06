@@ -87,7 +87,8 @@ class Agent:
 
     def estimate(self) -> OrchardEstimate | None:
         m = self.mapper
-        return estimate_orchard(m.trunks.confirmed(), m.local_row_spacing, m.local_tree_spacing)
+        return estimate_orchard(m.trunks.confirmed(), m.row_spacing_samples(),
+                                m.tree_spacing_samples())
 
     def timing_summary(self) -> dict[str, float]:
         return {f"ms_{k}": 1e3 * float(np.median(v)) for k, v in self.timings.items() if v}
