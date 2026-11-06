@@ -46,6 +46,9 @@ class ExploreConfig:
     final_spins: int = 3  # look around before declaring the orchard explored (at most)
     min_frontier_cells: int = 3
     relevance_radius: float = 5.0  # m from a mapped trunk
+    # ...or this many row spacings, if larger: always look at least one row beyond the
+    # outermost mapped row (with 5.4 m rows a fixed 5 m radius missed an outer row)
+    relevance_rows: float = 1.5
     start_radius: float = 10.0  # m around the start, before any tree is mapped
     replan_every: int = 15  # steps
     switch_ratio: float = 0.7  # switch goals only if the new one is this much closer
@@ -95,6 +98,7 @@ class Explorer:
         self.n_safety = 0
         self.n_fallback = 0
         self.n_final_spins = 0
+        self.row_spacing: float | None = None  # measured by the mapper, set by the caller
         self._force_replan = False
 
     # ------------------------------------------------------------ planning
@@ -198,7 +202,10 @@ class Explorer:
                 continue
             pts = to_xy(cells)
             if tree is not None:
-                near = tree.query(pts)[0] <= c.relevance_radius
+                radius = c.relevance_radius
+                if self.row_spacing is not None and np.isfinite(self.row_spacing):
+                    radius = max(radius, c.relevance_rows * self.row_spacing)
+                near = tree.query(pts)[0] <= radius
             else:
                 near = np.linalg.norm(pts - self.start_xy, axis=1) <= c.start_radius
             if not near.any():

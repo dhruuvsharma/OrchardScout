@@ -120,6 +120,8 @@ def main() -> None:
         traj_est.append(res.T_M_cam)
 
         trunks = agent.mapper.trunks.confirmed()
+        samples = agent.mapper.row_spacing_samples()
+        explorer.row_spacing = float(np.median(samples)) if len(samples) >= 10 else None
         v, w = explorer.command(res.T_M_cam, agent.mapper.grid,
                                 agent.mapper.trunks.provisional(explorer.cfg.relevance_min_obs),
                                 agent.mapper.trunks.provisional(3))
