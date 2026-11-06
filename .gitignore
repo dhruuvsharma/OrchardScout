@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Experiment outputs (videos, logs, frames) stay local; curated figures go in docs/images
+runs/
+outputs/
+*.mp4
+*.npz
+
+# Model weights and caches
+*.pt
+*.pth
+*.safetensors
+*.onnx
+hf_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets, just in case
+.env
+*.key
