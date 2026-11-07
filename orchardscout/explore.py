@@ -62,6 +62,12 @@ class ExploreConfig:
     face_tolerance_deg: float = 12.0
     stuck_steps: int = 100  # > the longest turn in place (pi / 0.6 rad/s = 52 steps)
     stuck_dist: float = 0.3  # m moved within stuck_steps
+    # Watchdog: end the run as "stuck" if the drone stays within stall_dist of one spot for
+    # stall_steps (150 s; three final look-arounds take ~32 s). Goal blacklisting alone could
+    # not break a livelock in which every new plan started with the same short hop past a
+    # trunk that the safety layer refused.
+    stall_steps: int = 1500
+    stall_dist: float = 1.5  # m
     blacklist_radius: float = 1.5  # m around a goal that could not be reached
     window_margin: float = 12.0  # m around the seen area
     safety_radius: float = 0.45  # m: closer than this to a trunk centre -> back away
@@ -109,6 +115,7 @@ class Explorer:
         self.n_measure_spins = 0
         self._flown_since_spin = 0.0
         self._last_xy: np.ndarray | None = None
+        self._track: list[np.ndarray] = []  # recent positions, for the watchdog
         self._force_replan = False
 
     # ------------------------------------------------------------ planning
@@ -319,6 +326,9 @@ class Explorer:
         yaw = float(np.arctan2(f[1], f[0]))
         if self.start_xy is None:
             self.start_xy = xy.copy()
+        if self._stalled(xy):
+            self.mode, self.status, self.plan = self.DONE, "stuck", None
+            return np.zeros(2), 0.0
 
         if self.mode == self.SPIN:
             self.spun += c.spin_rate * 0.1
@@ -405,6 +415,15 @@ class Explorer:
             return np.inf
         p = self.follower.path
         return float(np.linalg.norm(p[0] - xy) + np.sum(np.linalg.norm(np.diff(p, axis=0), axis=1)))
+
+    def _stalled(self, xy: np.ndarray) -> bool:
+        c = self.cfg
+        self._track.append(xy)
+        if len(self._track) <= c.stall_steps:
+            return False
+        self._track = self._track[-c.stall_steps:]
+        win = np.asarray(self._track)
+        return bool(np.linalg.norm(win - win[0], axis=1).max() < c.stall_dist)
 
     def _stuck(self) -> bool:
         c = self.cfg

@@ -53,6 +53,20 @@ def test_frontiers_near_the_start_count_until_spacing_is_known():
     assert ex._make_plan(np.zeros(2), g, trees, trees) is None  # only near-tree frontiers
 
 
+def test_watchdog_ends_a_run_that_stays_in_one_place():
+    g = _grid_with_free_box(-5, 5, -5, 5)
+    ex = Explorer(ExploreConfig(stall_steps=50, relevance_radius=8.0))
+    ex.mode = ex.FOLLOW
+    T = np.eye(4)
+    T[:3, 2] = [1.0, 0.0, 0.0]
+    trees = np.array([[2.0, 2.7], [-1.0, 2.7], [2.0, -2.7]])
+    for _ in range(60):  # pose never changes, as if every command were refused
+        ex.command(T, g, trees, trees)
+        if ex.done:
+            break
+    assert ex.done and ex.status == "stuck"
+
+
 def test_safety_layer_backs_away_from_a_close_trunk():
     ex = Explorer()
     T = np.eye(4)
