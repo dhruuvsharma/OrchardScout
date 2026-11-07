@@ -44,7 +44,7 @@ def segment(path: Path, speed: float, caption: str) -> list[np.ndarray]:
         while t <= k:
             g = cv2.resize(f, (W, H))
             cv2.rectangle(g, (480, H - 58), (W, H - 30), (25, 25, 25), -1)
-            cv2.putText(g, f"{caption}   (x{speed:g} speed)", (490, H - 38),
+            cv2.putText(g, caption, (490, H - 38),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 220, 120), 1, cv2.LINE_AA)
             frames.append(g)
             t += step
@@ -57,7 +57,7 @@ def segment(path: Path, speed: float, caption: str) -> list[np.ndarray]:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--segment", nargs=3, action="append", metavar=("MP4", "SPEED", "CAPTION"),
-                    required=True)
+                    required=True, help="SPEED: playback speed relative to the raw recording")
     ap.add_argument("--results", nargs="*", default=[], help="lines for the end card")
     ap.add_argument("--out", default="docs/media/orchardscout_demo.mp4")
     args = ap.parse_args()

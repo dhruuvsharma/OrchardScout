@@ -4,91 +4,91 @@
 <meta charset="utf-8">
 <title>OrchardScout: camera-only exploration of an orchard of unknown size</title>
 <style>
-  @page { size: A4; margin: 11mm 12mm 10mm 12mm; }
-  body { font: 9.1pt/1.36 "Segoe UI", system-ui, sans-serif; color: #1b1b1b; margin: 0; }
-  h1 { font-size: 15pt; margin: 0 0 1mm; }
-  .sub { color: #555; font-size: 8.6pt; margin: 0 0 3mm; }
-  h2 { font-size: 10.2pt; margin: 3.2mm 0 1.2mm; color: #2f6b3a; border-bottom: 0.6pt solid #cfd8cc; }
-  p { margin: 0 0 1.6mm; }
-  ul { margin: 0 0 1.6mm; padding-left: 4.5mm; }
-  li { margin: 0 0 0.8mm; }
-  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 5mm; }
-  table { border-collapse: collapse; width: 100%; font-size: 8.2pt; margin: 1mm 0 1.5mm; }
-  th, td { border-bottom: 0.5pt solid #ddd; padding: 0.9mm 1.2mm; text-align: left; }
-  th { color: #444; font-weight: 600; }
+  @page { size: A4; margin: 10mm 11mm 9mm 11mm; }
+  body { font: 8.7pt/1.33 "Segoe UI", system-ui, sans-serif; color: #1b1b1b; margin: 0; }
+  h1 { font-size: 14.5pt; margin: 0 0 0.8mm; }
+  .sub { color: #555; font-size: 8.3pt; margin: 0 0 2.2mm; }
+  h2 { font-size: 9.8pt; margin: 2.4mm 0 1mm; color: #2f6b3a; border-bottom: 0.6pt solid #cfd8cc; }
+  p { margin: 0 0 1.3mm; }
+  ul { margin: 0 0 1.3mm; padding-left: 4.2mm; }
+  li { margin: 0 0 0.6mm; }
+  .cols { display: grid; grid-template-columns: 1.08fr 1fr; gap: 5mm; }
+  table { border-collapse: collapse; width: 100%; font-size: 7.9pt; margin: 0.6mm 0 1mm; }
+  th, td { border-bottom: 0.5pt solid #ddd; padding: 0.6mm 1.1mm; text-align: left; white-space: nowrap; }
+  th { color: #444; font-weight: 600; vertical-align: bottom; }
   td.n, th.n { text-align: right; }
-  figure { margin: 1mm 0 1.5mm; }
+  tr.sep td { border-top: 0.9pt solid #9fb59a; }
+  .bad { color: #b03030; font-weight: 600; }
+  figure { margin: 0.5mm 0 1mm; }
   figure img { width: 100%; border: 0.5pt solid #ccc; }
-  figcaption { font-size: 7.6pt; color: #555; margin-top: 0.6mm; }
-  .note { font-size: 7.8pt; color: #555; }
-  code { font-family: Consolas, monospace; font-size: 8pt; }
+  figcaption { font-size: 7.3pt; color: #555; margin-top: 0.4mm; }
+  .note { font-size: 7.4pt; color: #555; margin: 0; }
 </style>
 </head>
 <body>
 <h1>OrchardScout: exploring an orchard of unknown size with one camera</h1>
 <p class="sub">Dhruv Sharma &middot; proof of concept, November 2026 &middot;
-code, video and full results: <b>github.com/dhruuvsharma/OrchardScout</b></p>
+code, video and every run: <b>github.com/dhruuvsharma/OrchardScout</b></p>
 
 <div class="cols">
 <div>
 <h2>Task</h2>
 <p>A drone flies under the canopy of a simulated orchard. Using <b>only an RGB camera</b>
 it must localise itself, explore, build a map and work out <b>how big the orchard is</b>
-(rows, row length, spacing, extent), which it is never told. Every run draws a new
-orchard: 4&ndash;20 rows, 20&ndash;120&nbsp;m long, random row and tree spacing, missing
-trees, jitter; the drone starts in an alley or outside an edge, facing anywhere.
-Simulator ground truth is used only to score the run. One stated prior: the flight
-controller holds a known height (1.0&nbsp;m), which fixes monocular scale.</p>
+(rows, row length, spacing, extent), which it is never told. Every run draws a new orchard
+(4&ndash;20 rows, 20&ndash;120&nbsp;m long, random row and tree spacing, missing trees,
+jitter) and starts the drone in an alley or outside an edge, facing anywhere. Simulator
+ground truth only scores the run. One stated prior: the flight controller holds a known
+height (1.0&nbsp;m), which fixes monocular scale. No IMU, GPS or depth sensor.</p>
 
 <h2>Method</h2>
 <ul>
-<li><b>Depth:</b> Depth Anything V2 (metric). Its scale is ~5&times; off at drone height;
-every frame it is rescaled so a RANSAC ground plane (bottom 12&nbsp;% of the image) sits
+<li><b>Depth:</b> Depth Anything V2 (metric) is ~5&times; off in scale at drone height; each
+frame it is rescaled so a RANSAC ground plane (bottom 12&nbsp;% of the image) sits
 1.0&nbsp;m below the camera. Sky, depth-edge ramps and "rising" open-field ground are masked.</li>
 <li><b>Visual odometry:</b> KLT tracks + PnP/RANSAC on keyframe depth; the ground plane
 fixes roll, pitch and height every frame.</li>
 <li><b>Mapping:</b> occupancy grid (free space along every ray) and trunk landmarks
-(vertical point clusters, corrected for seeing only the trunk's front).</li>
-<li><b>Drift correction from orchard structure:</b> a <i>row compass</i> (rows are
-parallel: RANSAC lines of trees hold the heading) and a <i>row lattice</i> (rows are
-evenly spaced: sideways position is corrected modulo the locally measured spacing), plus
-translation-only landmark re-sighting.</li>
-<li><b>Size:</b> rows = density peaks across the row direction; spacings measured inside
-single frames (immune to drift); width = (rows&minus;1)&times;spacing.</li>
-<li><b>Exploration:</b> frontier-based, Dijkstra on an inflated grid; only frontiers
-within 5&nbsp;m of mapped trees count, so open field beyond the edges is ignored and the
-run <b>stops by itself</b> when the orchard has been seen. Paths prefer alleys (depth is
-poor over open grass); a safety layer keeps clear of trunks.</li>
-</ul>
-
-<h2>What I learned</h2>
-<ul>
-<li>Monocular depth fails in structured ways: wrong global scale, compression with
-distance, open grass bent upwards. Masking and range limits beat trying to "correct" it.</li>
-<li>Drift comes mostly from headland turns facing open field. Orchard geometry
-(parallel, evenly spaced rows) is a strong, cheap prior that removes it.</li>
-<li>A noisy correction can be worse than none: heading fitted from a few trees
-random-walked; robust line fits fixed it.</li>
+(vertical point clusters within 5&nbsp;m, corrected for seeing only the trunk's front).</li>
+<li><b>Drift correction from orchard structure:</b> a <i>row compass</i> (rows are parallel:
+RANSAC lines of trees hold the heading), a <i>row lattice</i> (rows are evenly spaced: the
+sideways position is corrected modulo the spacing) and landmark re-sighting.</li>
+<li><b>Size:</b> rows = density peaks across the row direction; spacings from trunks seen
+within 4&nbsp;m (accurate depth) over a few seconds; width = (rows&minus;1)&times;spacing.</li>
+<li><b>Exploration:</b> frontier-based (Dijkstra on an inflated grid). Only frontiers near
+mapped trees count, so open field beyond the edges is ignored and the run <b>stops by
+itself</b> once the orchard has been seen. Paths prefer alleys (depth is poor over open
+grass); a safety layer keeps clear of trunks.</li>
 </ul>
 </div>
 
 <div>
-<h2>Results</h2>
-<!--RESULTS_TABLE-->
+<h2>What I learned</h2>
+<ul>
+<li>Monocular depth fails in structured ways: wrong global scale, compression with distance,
+open grass bent upwards. Masks, range limits and close-range measurements beat trying to
+"correct" it.</li>
+<li>Most drift comes from turns at the orchard edge, facing open field. The orchard's own
+geometry (parallel, evenly spaced rows) is a strong, cheap prior that removes most of it.</li>
+<li>A noisy correction can be worse than none: a heading fitted from a few trees
+random-walked; robust line fits fixed it.</li>
+</ul>
 <!--RESULTS_FIGURE-->
+</div>
+</div>
+
+<h2>Results: autonomous runs, each on a new orchard</h2>
+<!--RESULTS_TABLE-->
 
 <h2>Limitations and next steps</h2>
 <ul>
-<li>Simulation only (MuJoCo; Isaac Sim needs an RTX GPU). Next: Isaac Lab / PX4 and
-real orchard footage to measure the sim-to-real gap.</li>
-<li>No global pose-graph optimisation or loop closure yet; long flights still accumulate
-along-row drift (length errors of a few %).</li>
-<li>Exploration is classical (frontiers). Natural next steps for the lab: a learned
-exploration policy compared against this baseline, and an adversarial "environment
-agent" that generates orchards (lighting, fog, irregular rows, slopes) to find where
-camera-only navigation breaks.</li>
+<li>Simulation only (MuJoCo; Isaac Sim needs an RTX GPU, the development machine has a GTX
+1650). Next: Isaac Lab / PX4 and real orchard footage to measure the sim-to-real gap.</li>
+<li>No global pose-graph optimisation or loop closure; long flights keep a few % of
+along-row drift, and a sideways-drifted duplicate row can still be counted as a new row.</li>
+<li>Exploration is classical. Next steps for the lab: a learned exploration policy compared
+against this baseline, and an adversarial "environment agent" that generates orchards
+(lighting, fog, irregular rows, slopes) to find where camera-only navigation breaks.</li>
 </ul>
-</div>
-</div>
 </body>
 </html>

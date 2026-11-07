@@ -1,6 +1,7 @@
 """Fill the one-page write-up with results and print it to PDF (headless Edge or Chrome).
 
-    python scripts/build_writeup.py --summary runs/final/summary.csv \
+    python scripts/build_writeup.py --summary dev=runs/final/summary.csv \
+        --summary held-out=runs/heldout/summary.csv \
         --figure docs/images/explore_medium_map.png --out docs/OrchardScout_writeup.pdf
 """
 
@@ -20,24 +21,51 @@ BROWSERS = [
 ]
 
 
-def table_html(rows: list[dict]) -> str:
-    head = ("<tr><th>orchard (true size)</th><th>sensing</th><th class=n>rows</th>"
-            "<th class=n>length</th><th class=n>width</th><th class=n>flown</th>"
-            "<th class=n>coverage</th><th class=n>coll.</th></tr>")
+def _rows_cell(r: dict | None) -> str:
+    if r is None:
+        return "-"
+    est, true = (x.strip() for x in r["rows"].split("/"))
+    cls = "" if est == true else ' class="bad"'
+    return f"<span{cls}>{est}</span>"
+
+
+def table_html(sets: list[tuple[str, list[dict]]]) -> str:
+    """One row per orchard: camera-only result next to the perfect-sensing bound."""
+    head = (
+        "<tr><th>set</th><th>orchard (true size)</th><th>start</th>"
+        "<th class=n>rows<br>camera</th><th class=n>length<br>camera</th>"
+        "<th class=n>width<br>camera</th><th class=n>flown<br>camera</th>"
+        "<th class=n>coverage<br>camera</th><th class=n>collisions<br>camera</th>"
+        "<th class=n>rows<br>perfect</th><th class=n>length<br>perfect</th>"
+        "<th class=n>width<br>perfect</th></tr>")
     body = []
-    for r in rows:
-        sensing = "camera only" if r["sensing"].startswith("net") else "perfect depth+pose"
-        body.append(
-            f"<tr><td>{r['size']} #{r['seed']} ({r['start']})</td><td>{sensing}</td>"
-            f"<td class=n>{r['rows']}</td><td class=n>{r['length']}</td>"
-            f"<td class=n>{r['width']}</td><td class=n>{r['distance']} m</td>"
-            f"<td class=n>{r['coverage']}</td><td class=n>{r['collisions']}</td></tr>")
+    for name, rows in sets:
+        by = {}
+        for r in rows:
+            by.setdefault((r["size"], r["seed"]), {})[r["sensing"]] = r
+        first = True
+        for (_size, _seed), pair in by.items():
+            cam, gt = pair.get("net / vo"), pair.get("gt / gt")
+            ref = cam or gt
+            sep = ' class="sep"' if first else ""
+            first = False
+            c = (lambda k, r=cam: r[k] if r else "-")  # noqa: E731
+            g = (lambda k, r=gt: r[k] if r else "-")  # noqa: E731
+            body.append(
+                f"<tr{sep}><td>{name}</td><td>{ref['orchard']}</td><td>{ref['start']}</td>"
+                f"<td class=n>{_rows_cell(cam)} / {ref['rows'].split('/')[1].strip()}</td>"
+                f"<td class=n>{c('length')}</td><td class=n>{c('width')}</td>"
+                f"<td class=n>{c('distance')} m</td><td class=n>{c('coverage')}</td>"
+                f"<td class=n>{c('collisions')}</td>"
+                f"<td class=n>{_rows_cell(gt)}</td><td class=n>{g('length')}</td>"
+                f"<td class=n>{g('width')}</td></tr>")
     return f"<table>{head}{''.join(body)}</table>"
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    ap.add_argument("--summary", required=True, help="CSV from scripts/summarize.py")
+    ap.add_argument("--summary", action="append", required=True,
+                    help="NAME=summary.csv from scripts/summarize.py (repeatable)")
     ap.add_argument("--figure", default=None)
     ap.add_argument("--caption", default="")
     ap.add_argument("--note", default="")
@@ -45,10 +73,13 @@ def main() -> None:
     ap.add_argument("--out", default="docs/OrchardScout_writeup.pdf")
     args = ap.parse_args()
 
-    with open(args.summary, newline="") as fh:
-        rows = list(csv.DictReader(fh))
+    sets = []
+    for item in args.summary:
+        name, path = item.split("=", 1)
+        with open(path, newline="") as fh:
+            sets.append((name, list(csv.DictReader(fh))))
     html = Path(args.template).read_text(encoding="utf-8")
-    html = html.replace("<!--RESULTS_TABLE-->", table_html(rows)
+    html = html.replace("<!--RESULTS_TABLE-->", table_html(sets)
                         + (f'<p class="note">{args.note}</p>' if args.note else ""))
     if args.figure:
         fig = Path(args.figure).resolve().as_uri()
