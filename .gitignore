@@ -11,7 +11,11 @@ venv/
 runs/
 outputs/
 *.mp4
+!docs/media/*.mp4
 *.npz
+
+# Generated from docs/writeup/writeup.html by scripts/build_writeup.py
+docs/writeup/writeup_filled.html
 
 # Model weights and caches
 *.pt

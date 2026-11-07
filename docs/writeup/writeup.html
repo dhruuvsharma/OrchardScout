@@ -4,17 +4,17 @@
 <meta charset="utf-8">
 <title>OrchardScout: camera-only exploration of an orchard of unknown size</title>
 <style>
-  @page { size: A4; margin: 10mm 11mm 9mm 11mm; }
-  body { font: 8.7pt/1.33 "Segoe UI", system-ui, sans-serif; color: #1b1b1b; margin: 0; }
+  @page { size: A4; margin: 8mm 10mm 7mm 10mm; }
+  body { font: 8.3pt/1.3 "Segoe UI", system-ui, sans-serif; color: #1b1b1b; margin: 0; }
   h1 { font-size: 14.5pt; margin: 0 0 0.8mm; }
   .sub { color: #555; font-size: 8.3pt; margin: 0 0 2.2mm; }
-  h2 { font-size: 9.8pt; margin: 2.4mm 0 1mm; color: #2f6b3a; border-bottom: 0.6pt solid #cfd8cc; }
+  h2 { font-size: 9.6pt; margin: 2mm 0 0.8mm; color: #2f6b3a; border-bottom: 0.6pt solid #cfd8cc; }
   p { margin: 0 0 1.3mm; }
   ul { margin: 0 0 1.3mm; padding-left: 4.2mm; }
   li { margin: 0 0 0.6mm; }
-  .cols { display: grid; grid-template-columns: 1.08fr 1fr; gap: 5mm; }
-  table { border-collapse: collapse; width: 100%; font-size: 7.9pt; margin: 0.6mm 0 1mm; }
-  th, td { border-bottom: 0.5pt solid #ddd; padding: 0.6mm 1.1mm; text-align: left; white-space: nowrap; }
+  .cols { display: grid; grid-template-columns: 1.2fr 1fr; gap: 5mm; }
+  table { border-collapse: collapse; width: 100%; font-size: 7.4pt; margin: 0.4mm 0 0.6mm; }
+  th, td { border-bottom: 0.5pt solid #ddd; padding: 0.25mm 1mm; text-align: left; white-space: nowrap; }
   th { color: #444; font-weight: 600; vertical-align: bottom; }
   td.n, th.n { text-align: right; }
   tr.sep td { border-top: 0.9pt solid #9fb59a; }
@@ -78,17 +78,23 @@ random-walked; robust line fits fixed it.</li>
 </div>
 
 <h2>Results: autonomous runs, each on a new orchard</h2>
+<p>Final code. <b>Held-out</b>: five orchards never run before the code was frozen (an earlier
+held-out round found two failures, since fixed; those orchards joined the development set).
+<b>Camera</b>: the real system. <b>Perfect</b>: simulator depth and pose (upper bound). Red: wrong row count.</p>
 <!--RESULTS_TABLE-->
 
 <h2>Limitations and next steps</h2>
 <ul>
-<li>Simulation only (MuJoCo; Isaac Sim needs an RTX GPU, the development machine has a GTX
-1650). Next: Isaac Lab / PX4 and real orchard footage to measure the sim-to-real gap.</li>
-<li>No global pose-graph optimisation or loop closure; long flights keep a few % of
-along-row drift, and a sideways-drifted duplicate row can still be counted as a new row.</li>
-<li>Exploration is classical. Next steps for the lab: a learned exploration policy compared
-against this baseline, and an adversarial "environment agent" that generates orchards
-(lighting, fog, irregular rows, slopes) to find where camera-only navigation breaks.</li>
+<li>Simulation only (MuJoCo; Isaac Sim needs an RTX GPU). Next: Isaac Lab / PX4 and real orchard footage.</li>
+<li><b>Failures, camera only:</b> on the largest orchards (0.9&ndash;1.6&nbsp;km of flight) drift near
+the edges passed half a row spacing and added or dropped an edge row (large #1, #2): no loop
+closure yet, and re-seen rows are the natural constraint. A ~10&nbsp;% short spacing in wide
+alleys added a row (small #3, medium #3). One run livelocked beside a trunk (now ended by a
+watchdog); its re-run touched a tree for 10&nbsp;s. <b>Perfect sensing:</b> one run stopped
+early (free space is mapped to 8&nbsp;m, trunks to 5&nbsp;m). Fixes are under evaluation.</li>
+<li>Exploration is classical. Next: a learned exploration policy against this baseline, and
+an adversarial "environment agent" that generates orchards (lighting, fog, irregular rows,
+slopes) to find where camera-only navigation breaks.</li>
 </ul>
 </body>
 </html>

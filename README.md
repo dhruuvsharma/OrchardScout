@@ -1,101 +1,276 @@
 # OrchardScout
 
 **Camera-only drone exploration of an orchard whose size is unknown.**
-A small multirotor flies under the canopy of a procedurally generated orchard with one RGB
-camera. From the camera alone it estimates depth (monocular metric depth), tracks its own
-motion (visual odometry), maps trunks and free space, explores until it has found the
-orchard's edges on every side, and reports how big the orchard is: number of rows, row
-length, row spacing and overall extent.
+A small multirotor flies under the canopy of a procedurally generated orchard with a single
+RGB camera. From the camera alone it estimates depth, tracks its own motion, maps the trees,
+explores until it has seen the orchard's edges on every side (then stops by itself), and
+reports how big the orchard is: number of rows, row length, row spacing and overall extent.
 
-> Status: **work in progress** (proof of concept, November 2026). The whole pipeline runs
-> end to end: simulator, depth, odometry, mapping with drift correction, size estimation
-> and autonomous frontier exploration with a stop rule. Systematic evaluation on small,
-> medium and large orchards is under way; see the [roadmap](#roadmap).
+**Results (final code, camera only, fully autonomous).** On 5 held-out orchards that were
+never run before the code was frozen, the drone counted the rows exactly in 4 and was one
+row off in the largest (19 rows, 92 x 98 m). Over all 16 orchards, including the 11 used
+during development: rows exact in 12 of 16 and never off by more than 2; median error 3.0 %
+in row length and 4.9 % in orchard width; 99-100 % of every orchard observed; 7.6 km flown
+and one run touched a tree (10 s of contact). With perfect depth and pose in place of the
+camera pipeline, the same explorer counted the rows exactly in all 16. Every run, and every
+failure with its cause, is below.
 
-![Onboard camera, ground-truth depth and chase view in two generated orchards](docs/images/scene_views.jpg)
-*Left to right: onboard RGB (the only thing the agent sees), simulator depth (evaluation
-only), chase camera. Top: inside an alley. Bottom: at the orchard edge.*
+![Exploring a medium orchard: onboard camera, monocular depth and the agent's live map](docs/images/demo.gif)
+
+*Left: onboard camera (the only input) and the network's metric depth. Right: the agent's
+own map: mapped trunks (red), flown path (blue), current plan (green), frontiers (cyan)
+and the size estimate (magenta box). 20x real time. Full video (2 min, three orchards): [`docs/media/orchardscout_demo.mp4`](docs/media/orchardscout_demo.mp4).
+One-page write-up: [`docs/OrchardScout_writeup.pdf`](docs/OrchardScout_writeup.pdf).*
 
 ## The task
 
 | Requirement | How it is handled |
 |---|---|
 | Simulated orchard, different every run | Procedural generator: rows, row length, spacings, tree sizes, missing trees and position jitter are random per episode |
-| Camera only at run time | One forward RGB camera (640x480, ~90 deg horizontal FOV). No LiDAR, depth sensor, GPS or ground-truth pose |
+| Camera only at run time | One forward RGB camera (640x480, ~90 deg horizontal FOV). No LiDAR, depth sensor, GPS, IMU or ground-truth pose |
 | Monocular depth | Depth Anything V2 (metric, outdoor, Small), rescaled online from the ground plane |
-| Visual odometry | KLT tracking + PnP on metric depth, keyframes, ground-plane attitude constraint |
-| Exploration + mapping | Occupancy grid + trunk landmark map; frontier exploration with A*-style (Dijkstra) planning and a safety layer |
-| Unknown extent | Only frontiers near mapped trees count; exploration stops when none are left, then rows, spacing and extent are read off the map |
+| Visual odometry | KLT tracking + PnP on metric depth, keyframes, ground-plane attitude/height constraint |
+| Explores and builds a map | Occupancy grid + trunk landmark map; frontier exploration with a safety layer |
+| Orchard size unknown | Only frontiers near mapped trees count, so exploration stops once the orchard and its edges have been seen; rows, spacing and extent are then read off the map |
 
-Simulator ground truth (depth, pose, layout) is used **only for evaluation**, never as an
-input to the agent.
+Simulator ground truth (depth, pose, layout) is used **only to score runs**, never as an
+input to the agent. **One stated prior:** the drone flies at a known height (1.0 m) held
+by its flight controller, as real multirotors do with a barometer or range sensor; the
+agent uses it to fix the metric scale of monocular depth, the way monocular visual
+odometry on cars uses the known camera height above the road.
 
-**One stated prior:** the drone flies at a fixed, known height (1.0 m) held by its flight
-controller, as a real multirotor does with a barometer or downward range sensor. The agent
-uses that number to fix the metric scale of monocular depth, the way monocular visual
-odometry on cars uses the known camera height above the road. No IMU is used.
+## Results
+
+Each run is a fresh orchard, a random start (inside an alley or outside an edge, any
+heading), and fully autonomous flight until the explorer decides the orchard has been
+seen. *Camera only* is the real system. *Perfect depth + pose* replaces the network's depth
+and the odometry with simulator ground truth, as an upper bound for the exploration and
+size-estimation logic.
+
+**Evaluation protocol.** The code was frozen and run on five orchards it had never seen
+(held-out round 1, at the end of this section). That round exposed two failures, so they
+were fixed and those five orchards became development orchards. The fixed code (commit
+`06541c7`) was frozen again and run on five *new* orchards (round 2). Every number below
+comes from that final code (one run used `4bc91dc`, which only adds a stall watchdog; see
+the failure cases), and round 1 is reported as it happened.
+
+**Held-out orchards, round 2** (never run before the final code was frozen):
+
+| orchard (true size) | start | sensing | rows est / true | length err | width err | row spacing err | flown (m) | coverage | collisions | VO drift | trunk P / R |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| small #5: 6 rows, 32 x 23 m | alley | camera only | 6 / 6 | +9.4 % | -4.1 % | -4.1 % | 158 | 100 % | 0 | 1.8 % | 0.28 / 0.44 |
+| small #6: 5 rows, 24 x 16 m | edge | camera only | 5 / 5 | +1.4 % | -5.8 % | -5.8 % | 92 | 100 % | 0 | 2.3 % | 0.39 / 0.49 |
+| medium #4: 11 rows, 55 x 59 m | alley | camera only | 11 / 11 | +2.1 % | -9.4 % | -9.4 % | 695 | 100 % | 0 | 0.1 % | 0.09 / 0.13 |
+| medium #5: 11 rows, 64 x 45 m | edge | camera only | 11 / 11 | +0.9 % | -2.9 % | -2.9 % | 614 | 100 % | 0 | 0.6 % | 0.17 / 0.27 |
+| large #2: 19 rows, 92 x 98 m | edge | camera only | 18 / 19 | +3.3 % | -12.1 % | -6.9 % | 1639 | 99 % | 0 | 0.3 % | 0.09 / 0.12 |
+| small #5: 6 rows, 32 x 23 m | alley | perfect depth + pose | 6 / 6 | -0.1 % | +0.5 % | +0.5 % | 147 | 97 % | 0 | 0.0 % | 1.00 / 0.76 |
+| small #6: 5 rows, 24 x 16 m | edge | perfect depth + pose | 5 / 5 | +0.2 % | -2.0 % | -2.0 % | 123 | 100 % | 0 | 0.0 % | 1.00 / 1.00 |
+| medium #4: 11 rows, 55 x 59 m | alley | perfect depth + pose | 11 / 11 | -0.0 % | -0.4 % | -0.4 % | 712 | 100 % | 0 | 0.0 % | 1.00 / 0.94 |
+| medium #5: 11 rows, 64 x 45 m | edge | perfect depth + pose | 11 / 11 | -0.0 % | -0.3 % | -0.3 % | 505 | 100 % | 0 | 0.0 % | 1.00 / 0.82 |
+| large #2: 19 rows, 92 x 98 m | edge | perfect depth + pose | 19 / 19 | +0.0 % | -0.9 % | -0.9 % | 1658 | 100 % | 0 | 0.0 % | 1.00 / 0.91 |
+
+**Development orchards** (used while building the system, final code):
+
+| orchard (true size) | start | sensing | rows est / true | length err | width err | row spacing err | flown (m) | coverage | collisions | VO drift | trunk P / R |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| small #0: 6 rows, 23 x 16 m | alley | camera only | 6 / 6 | +7.4 % | -0.1 % | -0.1 % | 113 | 100 % | 0 | 3.7 % | 0.41 / 0.58 |
+| small #1: 5 rows, 32 x 14 m | edge | camera only | 5 / 5 | +0.4 % | -2.3 % | -2.3 % | 122 | 100 % | 0 | 1.9 % | 0.39 / 0.66 |
+| small #2: 6 rows, 24 x 27 m | alley | camera only | 6 / 6 | +2.6 % | -8.4 % | -8.4 % | 205 | 100 % | 0 | 1.7 % | 0.16 / 0.24 |
+| small #3: 6 rows, 21 x 27 m | alley | camera only | 7 / 6 | +16.3 % | +6.6 % | -11.2 % | 150 | 100 % | 0 | 0.9 % | 0.21 / 0.33 |
+| small #4: 6 rows, 28 x 30 m | edge | camera only | 6 / 6 | +13.4 % | -9.6 % | -9.6 % | 268 | 100 % | 0 | 0.5 % | 0.15 / 0.25 |
+| medium #0: 12 rows, 47 x 34 m | alley | camera only | 12 / 12 | -4.0 % | -0.0 % | -0.0 % | 350 | 100 % | 0 | 1.0 % | 0.49 / 0.60 |
+| medium #1: 10 rows, 68 x 31 m | edge | camera only | 10 / 10 | +0.8 % | -1.9 % | -1.9 % | 341 | 100 % | 0 | 1.3 % | 0.09 / 0.11 |
+| medium #2: 12 rows, 49 x 60 m | edge | camera only | 12 / 12 | +12.2 % | -9.4 % | -9.4 % | 509 | 100 % | 0 | 0.8 % | 0.15 / 0.19 |
+| medium #3: 12 rows, 45 x 59 m | alley | camera only | 13 / 12 | +14.9 % | -2.4 % | -10.5 % | 435 | 100 % | 0 | 3.0 % | 0.10 / 0.16 |
+| large #0: 19 rows, 90 x 56 m | alley | camera only | 19 / 19 | +0.8 % | -1.3 % | -1.3 % | 1041 | 100 % | 100 | 3.9 % | 0.41 / 0.46 |
+| large #1: 17 rows, 118 x 55 m | edge | camera only | 19 / 17 | +0.1 % | +10.7 % | -1.6 % | 884 | 100 % | 0 | 0.3 % | 0.13 / 0.14 |
+| small #0: 6 rows, 23 x 16 m | alley | perfect depth + pose | 6 / 6 | +0.0 % | -2.7 % | -2.7 % | 93 | 100 % | 0 | 0.0 % | 1.00 / 1.00 |
+| small #1: 5 rows, 32 x 14 m | edge | perfect depth + pose | 5 / 5 | -41.3 % | -1.9 % | -1.9 % | 65 | 75 % | 0 | 0.0 % | 1.00 / 0.56 |
+| small #2: 6 rows, 24 x 27 m | alley | perfect depth + pose | 6 / 6 | +0.1 % | -1.0 % | -1.0 % | 221 | 100 % | 0 | 0.0 % | 1.00 / 0.98 |
+| small #3: 6 rows, 21 x 27 m | alley | perfect depth + pose | 6 / 6 | +0.3 % | -0.3 % | -0.3 % | 166 | 100 % | 0 | 0.0 % | 1.00 / 0.98 |
+| small #4: 6 rows, 28 x 30 m | edge | perfect depth + pose | 6 / 6 | -0.1 % | +0.1 % | +0.1 % | 233 | 100 % | 0 | 0.0 % | 1.00 / 0.90 |
+| medium #0: 12 rows, 47 x 34 m | alley | perfect depth + pose | 12 / 12 | +0.0 % | -0.9 % | -0.9 % | 323 | 100 % | 0 | 0.0 % | 1.00 / 0.96 |
+| medium #1: 10 rows, 68 x 31 m | edge | perfect depth + pose | 10 / 10 | +0.0 % | +0.1 % | +0.1 % | 290 | 99 % | 0 | 0.0 % | 1.00 / 0.80 |
+| medium #2: 12 rows, 49 x 60 m | edge | perfect depth + pose | 12 / 12 | +0.1 % | -1.4 % | -1.4 % | 552 | 100 % | 0 | 0.0 % | 1.00 / 0.92 |
+| medium #3: 12 rows, 45 x 59 m | alley | perfect depth + pose | 12 / 12 | -0.1 % | -1.1 % | -1.1 % | 521 | 100 % | 0 | 0.0 % | 1.00 / 0.87 |
+| large #0: 19 rows, 90 x 56 m | alley | perfect depth + pose | 19 / 19 | +0.0 % | -0.6 % | -0.6 % | 986 | 100 % | 0 | 0.0 % | 1.00 / 0.94 |
+| large #1: 17 rows, 118 x 55 m | edge | perfect depth + pose | 17 / 17 | +0.0 % | +0.1 % | +0.2 % | 917 | 100 % | 0 | 0.0 % | 1.00 / 0.84 |
+
+Large #0, camera only: the first attempt livelocked beside a trunk after 585 m (75 % of the
+orchard seen) and never finished; the row above is the second attempt. Camera-only runs are
+not bit-for-bit repeatable (GPU inference), so the two attempts flew different paths.
+
+Errors are estimate minus truth. *Length*: along the rows, end trunk to end trunk.
+*Width*: across the rows, between the outer row centre lines. *Coverage*: share of the
+orchard area the map has observed. *Trunk P / R*: precision / recall of mapped trunks
+within 0.5 m after a best rigid alignment of the whole map (map shape quality).
+*Collisions*: simulation steps (0.1 s each) spent in contact with a tree.
+
+<details>
+<summary><b>Held-out round 1</b> (previous code, <code>5e0b4a2</code>): two failures, fixed in <code>06541c7</code></summary>
+
+| orchard (true size) | start | sensing | rows est / true | length err | width err | row spacing err | flown (m) | coverage | collisions | VO drift | trunk P / R |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| small #3: 6 rows, 21 x 27 m | alley | camera only | 5 / 6 | -46.4 % | -56.6 % | -47.1 % | 30 | 64 % | 0 | 2.0 % | 0.34 / 0.23 |
+| small #4: 6 rows, 28 x 30 m | edge | camera only | 7 / 6 | +13.1 % | +3.7 % | -13.6 % | 269 | 100 % | 0 | 1.0 % | 0.16 / 0.29 |
+| medium #2: 12 rows, 49 x 60 m | edge | camera only | 12 / 12 | +5.0 % | -6.0 % | -6.1 % | 578 | 100 % | 0 | 1.4 % | 0.10 / 0.15 |
+| medium #3: 12 rows, 45 x 59 m | alley | camera only | 16 / 12 | +13.2 % | +15.2 % | -15.6 % | 659 | 98 % | 0 | 2.8 % | 0.08 / 0.19 |
+| large #1: 17 rows, 118 x 55 m | edge | camera only | 17 / 17 | -0.9 % | -1.6 % | -1.6 % | 807 | 100 % | 0 | 0.4 % | 0.12 / 0.13 |
+| small #3: 6 rows, 21 x 27 m | alley | perfect depth + pose | 2 / 6 | -57.2 % | -79.9 % | +0.6 % | 15 | 55 % | 0 | 0.0 % | 1.00 / 0.19 |
+| small #4: 6 rows, 28 x 30 m | edge | perfect depth + pose | 6 / 6 | +0.0 % | +0.1 % | +0.1 % | 261 | 100 % | 0 | 0.0 % | 1.00 / 0.90 |
+| medium #2: 12 rows, 49 x 60 m | edge | perfect depth + pose | 12 / 12 | +0.2 % | -1.0 % | -1.0 % | 529 | 100 % | 0 | 0.0 % | 1.00 / 0.93 |
+| medium #3: 12 rows, 45 x 59 m | alley | perfect depth + pose | 2 / 12 | -79.8 % | -91.1 % | -2.5 % | 3 | 15 % | 0 | 0.0 % | 1.00 / 0.04 |
+| large #1: 17 rows, 118 x 55 m | edge | perfect depth + pose | 17 / 17 | +0.0 % | +0.1 % | +0.2 % | 917 | 100 % | 0 | 0.0 % | 1.00 / 0.84 |
+
+* **Stopping before the orchard was seen** (small #3 in both modes; medium #3 with perfect
+  sensing, after 3 m): with rows 5-6 m apart, every frontier was soon more than 5 m from a
+  mapped tree. Fix: frontiers near the start count until the row spacing is measured.
+* **Extra rows in wide alleys** (medium #3: 16 instead of 12; small #4: 7 instead of 6): a
+  single-frame spacing estimate, biased short, was used early and the row lattice forced it
+  onto the map. Fix: only close-range spacing is used, and the drone turns to collect it.
+
+These five orchards were then used to develop the fixes, so they appear again in the
+development table above, run with the final code.
+</details>
+
+![Camera-only exploration of a medium orchard, scored against ground truth](docs/images/explore_medium_map.png)
+*Camera-only run on a 12-row orchard (47.5 x 34.4 m), plotted against ground truth
+afterwards. Green: true path; blue dashes: the agent's own odometry; red dots: mapped
+trunks; circles: true trunks; dotted box: the agent's size estimate.*
+
+![Size estimate while flying](docs/images/explore_medium_size.png)
+*The same run: the estimate of length, width and row count against distance flown.*
+
+### Failure cases (final code)
+
+| Run | What happened | Cause |
+|---|---|---|
+| large #1 and #2, camera only | 19 / 17 rows (width +10.7 %); 18 / 19 rows (width -12.1 %) | Flights of 0.9-1.6 km. Near the outer edges odometry drift grew past half a row spacing, so the row lattice placed part of an edge row on the next lattice line (an extra row, #1), or the map shrank until two top rows merged (#2). Needs loop closure. |
+| small #3, medium #3, camera only | 7 / 6 and 13 / 12 rows | Row spacing measured 10-11 % short (wide alleys, where depth is already compressed at 4 m); a shorter spacing fits one more row into the same width. |
+| small #1, perfect sensing | stopped with 75 % seen (length -41 %) | Free space is mapped out to 8 m but trunks only to 5 m. Looking down the rows from their last mapped trees pushed the frontier more than 5 m from any mapped tree, so it no longer counted. |
+| large #0, camera only, first attempt | livelocked after 585 m | Parked next to a trunk, every new plan began with the same short hop past it, which the safety layer refused. A watchdog (`4bc91dc`) now ends such a run as "stuck". |
+| large #0, camera only, second attempt | 10 s in contact with a tree | Not diagnosed: only the number of contact steps was logged. |
+
+Fixes for the two exploration failures (frontiers count farther along the rows; a safe
+way out of an inflated obstacle) and per-event collision logging are on branch
+`explorer-v2`, under evaluation on a new held-out set.
+
+![Large orchard #1, camera only: an extra edge row from drift](docs/images/failure_large1_rows.png)
+*Large #1, camera only (19 rows counted, 17 true). Near the top and bottom edges the
+odometry (blue dashes) drifted about 2 m sideways from the true path (green), more than half
+the 3.4 m row spacing, and part of each outer row was mapped one row further out.*
+
+![Small orchard #1, perfect sensing: exploration stopped early](docs/images/failure_small1_early_stop.png)
+*Small #1, perfect depth and pose: the drone mapped the right-hand 19 m of the 32 m rows and
+stopped; the unknown area (grey) to the left began just over 5 m from the nearest mapped tree.*
+
+### Component checks
+
+* **Monocular depth** (`scripts/eval_depth.py`, 16 frames, medium orchard). The raw
+  network's scale is ~5x off at drone height (AbsRel ~3.9). After the ground-plane rescale,
+  AbsRel is 0.09 at 0-2 m, 0.12 at 2-5 m, 0.14 at 5-10 m and 0.3-0.5 beyond 10 m, so trunks
+  and obstacles are mapped only within 5 m and free space within 8 m.
+* **Visual odometry alone** (`scripts/eval_vo.py`, three alleys of a medium orchard, 171 m,
+  no map-based correction): ATE 0.58 m, final error 0.30 m, heading error 1.7 deg with
+  network depth; 0.10 m / 0.18 m / 0.1 deg with simulator depth.
+
+![RGB, ground-truth depth, rescaled prediction and relative error](docs/images/depth_eval.jpg)
+*RGB | ground-truth depth | prediction after rescaling | relative error (blue 0 %, red >= 50 %).*
 
 ## How it works
 
 ```
 RGB ─► Depth Anything V2 (metric) ─► ground-plane rescale ─► metric depth ─┬─► visual odometry (KLT + PnP)
-  │                                  (known 1.0 m height)                   │        │ pose
-  └─► sky mask, depth-edge mask ───────────────────────────────────────────┘        ▼
+  │                                  (known 1.0 m height)                   │         │ pose
+  └─► sky, depth-ramp and "rising ground" masks ───────────────────────────┘         ▼
                                                                     trunk detection + occupancy grid
-                                                                        │       │
-                         drift correction: landmark re-sighting  ◄──────┘       ├─► frontier explorer ─► velocity
-                         + "row compass" (rows are parallel)                    └─► size estimate (rows, spacing, extent)
+                    drift correction from orchard structure  ◄──────┘        │
+                    (row compass, row lattice, landmark re-sighting)         ├─► frontier explorer ─► velocity
+                                                                             └─► size estimate (rows, spacing, extent)
 ```
 
-* **Depth and scale** (`depth.py`, `scale.py`, `perception.py`). The network gets the
-  scene's shape right but its scale ~5x wrong (trained on car-height images). Every frame,
-  a RANSAC plane is fitted to the bottom 12 % of the image and depth is rescaled so the
-  camera sits 1.0 m above it. The band is narrow on purpose: the network compresses depth
-  with distance even on flat ground, and a wider band biased the scale by 3-5 %. Sky is
-  masked by colour; pixels on depth "ramps" (the network blurs depth edges) are masked.
+* **Depth and scale** (`depth.py`, `scale.py`, `perception.py`). Every frame a RANSAC plane
+  is fitted to the bottom 12 % of the image and depth is rescaled so the camera sits 1.0 m
+  above it. The band is narrow on purpose: the network compresses depth with distance even
+  on flat ground, and a wider band biased odometry scale by ~4 %. Sky is masked by colour;
+  pixels on depth ramps (the network blurs depth edges) are masked; for odometry, open
+  grass that the network bends upwards ("rising ground") is masked too.
 * **Visual odometry** (`vo.py`). Shi-Tomasi corners spread over a grid, tracked frame to
-  frame with pyramidal Lucas-Kanade (seeded by a constant-velocity prediction, with a
-  forward-backward check), pose from PnP + RANSAC against the keyframe's 3-D points, then
-  Levenberg-Marquardt refinement. Local tracking avoids the mismatches that descriptor
-  matching makes between look-alike trees. The ground plane also gives gravity and height
-  every frame; they are blended into the pose, so only x, y and heading can drift.
+  frame with pyramidal Lucas-Kanade (seeded by a constant-velocity prediction,
+  forward-backward checked); pose from PnP + RANSAC against the keyframe's 3-D points, then
+  Levenberg-Marquardt. Local tracking avoids mismatches between look-alike trees. The
+  ground plane gives gravity and height every frame, so only x, y and heading can drift.
 * **Mapping** (`mapping.py`). A 2-D occupancy grid at flight height: every visible point
   frees the line of sight to it (trunks are the only obstacles at flight height and would
-  block the ray). Obstacles come only from *trunk detections*: compact vertical clusters of
-  points 0.25-1.45 m above ground and within 5 m, corrected for seeing only the trunk's
-  front half. Raw points are not trusted as obstacles, because the network bends
-  featureless open grass upwards. Detections are fused into trunk landmarks.
-* **Drift correction.** (1) Landmark re-sighting: trunks seen again are matched to the
-  map (gate 0.6 m along rows, 1.2 m across) and the pose is pulled towards them
-  (translation only: a rotation fitted to a few close trunks is too noisy). (2) Row
-  compass: rows are straight and parallel, so the grid orientation of recently seen trees
-  must equal the orientation frozen from the first mapped trees; the heading is pulled
-  back to it. This removes most heading drift from turns at the headlands.
-* **Size estimation** (`size_estimation.py`). Grid orientation from neighbour directions;
-  rows as peaks of the trees' cross-row coordinate; length from runs of >= 3 trees along
-  each row (ghost detections cannot stretch it); row and tree spacing measured inside
-  single frames, where drift cannot affect them; width = (rows - 1) x row spacing.
+  block the ray). Obstacles come only from *trunk detections*: compact vertical clusters
+  0.25-1.45 m above ground and within 5 m, corrected for seeing only the trunk's front half.
+* **Drift correction from orchard structure.** *Row compass:* rows are straight and
+  parallel, so straight lines of recently seen trees (RANSAC, >= 3 trees) must keep the
+  orientation frozen from the first mapped trees; the heading is pulled back to it.
+  *Row lattice:* rows are evenly spaced, so row lines seen now must fall on the lattice;
+  the residual (modulo the row spacing, once it has been measured up close) corrects the
+  sideways position. *Landmark re-sighting:*
+  trunks seen again pull the position back (translation only).
+* **Size** (`size_estimation.py`). Grid orientation from tree lines; which axis the rows
+  run along is decided by the smaller in-line spacing; rows are peaks of the trees'
+  cross-row coordinate; length from runs of >= 3 trees per row; row and tree spacing from
+  trunks seen within 4 m over a few seconds (where depth is accurate), and from nothing
+  else: until there are enough of these measurements, no spacing is used at all; width =
+  (rows - 1) x spacing.
 * **Exploration** (`explore.py`). 360-degree look-around, then nearest-frontier
-  exploration on a 0.4 m planning grid (inflated obstacles, unknown space passable at a
-  cost, Dijkstra). A frontier is relevant only within 5 m of a mapped tree, so open field
-  beyond the outer rows stops attracting the drone; when no relevant frontier is left the
-  orchard is fully seen and the run ends. A safety layer stops or backs the drone away
-  from any trunk seen at least twice, and paths are re-checked every step.
+  exploration on a 0.4 m planning grid (Dijkstra; inflated obstacles; unknown space
+  passable at a cost; cells far from trees cost more, because monocular depth and odometry
+  are worst over open grass). A frontier counts only within max(5 m, 1.5 row spacings) of
+  a mapped tree, so open field beyond the outer rows stops attracting the drone. Until the
+  row spacing has been measured, frontiers within 12 m of the start count too, and on
+  reaching a goal the drone turns a full circle (at most every 8 m) so both neighbouring
+  rows come within close range. When no frontier counts any more, the drone looks around
+  once more and stops. A safety layer backs away from or stops short of any trunk seen at
+  least twice.
+
+## Engineering notes: what did not work, and why
+
+* **fp16 is 3-4x slower than fp32** on a GTX 1650 (no tensor cores).
+* **A wide ground band** (bottom 28 %) biased depth 3-5 % short at 0-4 m in flight.
+* **Joint fit of scale + depth compression + plane tilt** was not identifiable. Dropped.
+* **Snapping ground pixels to the fitted plane** tied every ground point's error to the
+  per-frame plane tilt and made heading drift worse.
+* **Raw points as obstacles:** over open grass the network bends the ground upwards and the
+  whole field became "obstacles". Only trunk-shaped clusters mark obstacles now.
+* **Rotation from a few landmarks** random-walked the heading; so did a compass based on
+  nearest-neighbour directions during exploration (few trees, odd viewpoints). Robust line
+  fits fixed the compass.
+* **Flying around the outside** of the orchard (cheapest for the planner) is where depth
+  and odometry are worst; paths now prefer staying near trees.
+* **Spacing measured in single frames** was 8-16 % short in wide alleys (both rows only
+  fit in the image from ~4.5 m, where depth is compressed). Measuring from close trunks
+  over a short window fixed it, but held-out round 1 showed that even falling back to
+  single-frame values *early in a run* did harm: the row lattice forced the short spacing
+  onto the map and created extra rows (16 instead of 12). Now nothing uses the spacing
+  until enough close-range measurements exist, and the drone turns to collect them.
+* **Stopping before the orchard was seen.** Free space is mapped out to 8 m but trunks only
+  to 5 m. With rows 5-6 m apart, after the first look-around every frontier lay more than
+  5 m from any mapped tree, so the explorer reported the orchard explored after 3-15 m
+  (round 1, even with perfect sensing). Frontiers near the start now count until the row
+  spacing is known.
+* **Choosing the row axis early** from a small map could pick the wrong axis when tree
+  spacing is close to row spacing; it is now revisited until clear.
+* **A fixed 5 m relevance radius** missed an outer row when rows were 5.4 m apart. The
+  radius now scales with the measured row spacing. This makes the drone fly longer near the
+  edges, which costs some accuracy in camera-only runs (more distance, more drift).
 
 ## Simulator
 
 [MuJoCo](https://mujoco.org). The original plan was Isaac Lab on Isaac Sim, but Isaac Sim
-needs an RTX GPU and the development machine has a GTX 1650 (4 GB). The agent only ever
-receives RGB frames, so the perception, mapping and exploration code does not depend on
-the simulator and can move to Isaac Lab or PX4 on an RTX machine.
+needs an RTX GPU and the development machine has a GTX 1650 (4 GB). The agent only receives
+RGB frames, so perception, mapping and exploration do not depend on the simulator.
 
-* **Orchard** (`orchard.py`): rows along one axis, trunks as cylinders, crowns as three
-  overlapping ellipsoids, a bare-soil strip under each row, open grass around. Textures are
-  generated procedurally from noise (`textures.py`); no downloaded assets.
-* **Drone** (`sim.py`): velocity-commanded, acceleration-limited body with yaw, at a fixed
+* **Orchard** (`orchard.py`, `textures.py`): rows along one axis, trunks as cylinders,
+  crowns as three overlapping ellipsoids, a bare-soil strip under each row, open grass
+  around; textures are procedural noise, no downloaded assets.
+* **Drone** (`sim.py`): velocity-commanded, acceleration-limited body with yaw at a fixed
   altitude below the canopy; roll and pitch follow acceleration through a first-order
   attitude lag, plus noise. Collisions are checked exactly against trunks and crowns.
-* **Rendering**: offscreen OpenGL with sun shadows, sky and fog, ~17 ms per 640x480 frame.
 
 | Parameter (drawn per episode) | Range |
 |---|---|
@@ -103,129 +278,64 @@ the simulator and can move to Isaac Lab or PX4 on an RTX machine.
 | Row length | 20-120 m (small 20-35, medium 40-70, large 80-120) |
 | Row spacing | 3-6 m |
 | Tree spacing in a row | 1.5-4 m, and at most 0.8 x row spacing |
-| Trunk radius | 7-15 cm |
-| Canopy base height | 1.7-2.3 m (flight height 1.0 m) |
+| Trunk radius / canopy base | 7-15 cm / 1.7-2.3 m (flight height 1.0 m) |
 | Missing trees / position jitter | 5 % / 12 cm (std) |
-| Start pose | random alley, or 2-5 m outside a random edge; heading uniform |
+| Start | random alley, or 2-5 m outside a random edge; heading uniform |
 
-![Top-down view of a generated medium orchard](docs/images/overview.jpg)
-
-## Results so far
-
-Numbers below come from scripted test flights (the drone is steered along the alleys with
-simulator ground truth, a test harness; the agent itself sees only the camera). Results of
-the autonomous exploration on several orchards will replace them.
-
-**Monocular depth** (16 frames, medium orchard; `scripts/eval_depth.py`). After the
-ground-plane rescale, AbsRel is 0.08 at 0-2 m, 0.10 at 2-5 m and 0.15 at 5-10 m, against
-~4 for the raw network. Beyond 10 m the network compresses depth (0.3-0.5 AbsRel), so the
-map uses depth only to 5 m (obstacles, trunks) and 8 m (free space).
-
-![RGB, ground-truth depth, rescaled prediction and relative error](docs/images/depth_eval.jpg)
-*RGB | ground-truth depth | prediction after rescaling | relative error (blue 0 %, red >= 50 %).*
-
-**Visual odometry** (three alleys of a medium orchard with two headland turns, 171 m;
-`scripts/eval_vo.py`):
-
-| Depth used | Final position error | Heading error | ATE (RMSE) | Path scale |
-|---|---|---|---|---|
-| simulator depth (upper bound) | 0.18 m (0.11 %) | 0.1 deg | 0.10 m | 1.00 |
-| monocular network depth | 0.30 m (0.17 %) | 1.7 deg | 0.58 m | 0.98 |
-
-**Mapping and size** (lawnmower over every alley of a small orchard, 151 m;
-`scripts/eval_mapping.py`):
-
-| Depth / pose | Rows | Length | Width | Row spacing | Trunk position error |
-|---|---|---|---|---|---|
-| simulator depth / true pose | 6 / 6 | -0.0 % | -1.3 % | -1.3 % | 1.4 cm |
-| network depth / true pose | 6 / 6 | +0.2 % | -0.6 % | -0.6 % | 6.1 cm |
-
-The fully camera-only result (network depth and odometry pose) is being stabilised: it
-recovers 6 / 6 rows with length and width within ~5 % in most runs, but a bad headland
-turn can still break it (see engineering notes).
-
-## Engineering notes (what did not work, and why)
-
-* **fp16 is 3-4x slower than fp32** on a GTX 1650 (no tensor cores): 136 ms vs 472 ms per
-  frame at input 518.
-* **Plane-fit band:** fitting the ground in the bottom 28 % of the image put depth 3-5 %
-  too short at 0-4 m in flight and made odometry 4 % short. The network compresses depth
-  even on flat ground, and the plane bends to follow it. Bottom 12 %: 0-2 % error.
-* **Joint scale + compression fit** (`a * d^gamma` with plane tilt) was not identifiable:
-  tilt and compression trade off. Dropped.
-* **Snapping ground pixels to the fitted plane** made heading drift worse: it ties every
-  ground point's error to the per-frame plane tilt.
-* **Open-field depth:** looking out of the orchard over featureless grass, the network
-  bends the ground upward. Raw points therefore never mark obstacles; only trunk-shaped
-  clusters do. The same frames drive most of the odometry error during headland turns.
-* **Rotation from landmarks** random-walked the heading (0.2 m noise over a 3 m spread is
-  ~4 deg). Translation-only landmark correction plus the row compass works.
-* **Trunk front-surface bias:** clustering visible points puts a trunk 2r/pi in front of
-  its axis, which shortened measured row spacing by ~4 %; corrected per detection.
-
-## Quick start
+## Reproduce
 
 ```bash
-python -m venv .venv
-# Windows: .venv\Scripts\activate    Linux/macOS: source .venv/bin/activate
+python -m venv .venv && .venv\Scripts\activate          # Linux/macOS: source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cu121   # or the CPU build
 pip install -r requirements.txt
 
-python scripts/check_env.py                                      # versions, GPU, render test
-python scripts/render_orchard.py --size medium --seed 3          # preview images
-python scripts/eval_depth.py --size medium --seed 1              # depth vs ground truth
-python scripts/eval_vo.py --size medium --seed 2 --alleys 3      # odometry on a scripted flight
-python scripts/eval_mapping.py --size small --seed 0             # mapping + size, scripted flight
-python scripts/run_explore.py --size small --seed 0 --video      # autonomous exploration
-pytest                                                           # 30 tests
+python scripts/check_env.py                                            # versions, GPU, render test
+python scripts/run_explore.py --size medium --seed 0 --video           # one autonomous run
+python scripts/run_explore.py --size medium --seed 0 --depth gt --pose gt   # perfect-sensing bound
+python scripts/summarize.py runs/explore --out runs/explore/summary    # results table
+python scripts/eval_depth.py --size medium --seed 1                    # depth vs ground truth
+python scripts/eval_vo.py --size medium --seed 2 --alleys 3            # odometry, scripted flight
+pytest                                                                 # 35 tests
 ```
 
-Add `--depth gt` (and `--pose gt` where available) for diagnostic upper bounds with
-simulator depth or pose. On a headless Linux machine set `MUJOCO_GL=egl` or `osmesa`.
+On a GTX 1650 the camera-only agent runs at ~2-3 steps per second with three runs sharing
+the GPU (the depth network takes ~135 ms per frame): 12-20 minutes for a small orchard,
+35-70 for a medium one and 1-2.5 hours for a large one. Headless
+Linux: set `MUJOCO_GL=egl` or `osmesa`.
 
 ## Repository layout
 
 ```
 orchardscout/
-  orchard.py          procedural orchard layout (ground truth) + MuJoCo geometry
-  textures.py         procedural tileable textures
-  sim.py              MuJoCo scene, flight model, cameras, collisions
-  geometry.py         intrinsics, transforms, back-projection
-  depth.py            monocular metric depth (+ per-frame disk cache for experiments)
-  scale.py            metric scale from the ground plane and the known flight height
-  masks.py            sky and depth-edge masks
-  perception.py       per-frame front end: depth, scale, masks, ground normal
-  vo.py               visual odometry
-  mapping.py          occupancy grid, trunk landmarks, drift correction, row compass
-  size_estimation.py  rows, spacing and extent from trunk positions
-  explore.py          frontier exploration, planner, safety layer
-  control.py          path follower, scripted test routes
-  agent.py            everything that runs on the drone, in one step() call
-  metrics.py, viz.py  evaluation and figures
-scripts/              check_env, render_orchard, eval_depth, eval_vo, eval_mapping, run_explore
-tests/                30 tests (layout, geometry, simulator, scale, VO, mapping, size)
+  orchard.py, textures.py   procedural orchard (ground truth) + MuJoCo geometry and textures
+  sim.py                    MuJoCo scene, flight model, cameras, collisions
+  depth.py, scale.py        monocular metric depth; scale from the ground plane
+  masks.py, perception.py   sky / depth-ramp masks; per-frame front end
+  vo.py                     visual odometry
+  mapping.py                occupancy grid, trunk landmarks, drift correction, spacing
+  size_estimation.py        rows, spacing and extent from trunk positions
+  explore.py, control.py    frontier explorer with safety layer; path follower
+  agent.py                  everything that runs on the drone, in one step() call
+  geometry.py, metrics.py, viz.py
+scripts/   run_explore, summarize, make_video, build_writeup, eval_depth, eval_vo, eval_mapping, ...
+tests/     35 tests (layout, geometry, simulator, scale, VO, mapping, size, explorer)
+docs/      figures, demo video, one-page write-up
 ```
 
-## Roadmap
+## Limitations and next steps
 
-- [x] Procedural orchard with randomised, unknown size; ground truth for evaluation
-- [x] MuJoCo drone simulator with onboard RGB camera, collisions, ground-truth depth/pose
-- [x] Monocular metric depth + online ground-plane scale recovery
-- [x] Visual odometry (KLT + PnP on metric depth, ground constraint)
-- [x] Occupancy grid and trunk landmark map; drift correction (landmarks + row compass)
-- [x] Size estimation: rows, row/tree spacing, length, width
-- [x] Frontier exploration with relevance near trees, stop rule and safety layer
-- [ ] Results on small / medium / large orchards: size error, coverage, drift, trunk precision/recall, collisions, speed
-- [ ] Video and short write-up
-- [ ] Extras: robustness to lighting and fog, learned exploration policy, loop closure
-
-## Limitations
-
-* Kinematic flight model with tilt from acceleration, not full rotor dynamics.
-* Rasterised rendering looks synthetic; real orchard footage would give different numbers.
-* Metric scale relies on locally flat ground and a known flight height.
-* The size estimate assumes straight, parallel rows (true of planted orchards, not of
-  irregular groves).
+* Simulation only, with rasterised rendering; numbers on real orchard footage would differ.
+  Next: Isaac Lab / PX4 on an RTX machine, and real orchard video for the sim-to-real gap.
+* No global pose-graph optimisation or loop closure. On the largest orchards (0.9-1.6 km of
+  flight) drift near the edges can exceed half a row spacing and add or drop an edge row;
+  re-seen rows are the natural loop-closure constraint. The raw trunk map also keeps
+  duplicates, which the structure-based size estimate mostly ignores.
+* In wide alleys the measured row spacing can still come out ~10 % short, which adds a row.
+* Metric scale relies on locally flat ground and a known flight height; the size estimate
+  assumes straight, parallel rows (true of planted orchards, not of irregular groves).
+* Exploration is classical (frontiers). Natural next steps: a learned exploration policy
+  compared against this baseline, and an adversarial "environment agent" that varies
+  lighting, fog, row irregularity and terrain to find where camera-only navigation breaks.
 
 ## License
 
