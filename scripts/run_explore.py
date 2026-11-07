@@ -47,6 +47,19 @@ def coverage(grid, layout, R, t) -> float:
     return float(np.mean(grid.seen[ij[ok, 0], ij[ok, 1]])) if ok.any() else 0.0
 
 
+def collision_events(hits: list[tuple[float, str]], gap: float = 0.15) -> list[dict]:
+    """Merge contact steps into events: start time, duration and what was hit."""
+    events: list[dict] = []
+    for t, name in hits:
+        if events and t - events[-1]["t_end"] <= gap and events[-1]["with"] == name:
+            events[-1]["t_end"] = t
+        else:
+            events.append({"t": round(t, 2), "t_end": t, "with": name})
+    for e in events:
+        e["duration_s"] = round(e.pop("t_end") - e["t"] + 0.1, 2)
+    return events
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--size", default="small", choices=["small", "medium", "large", "any"])
@@ -198,7 +211,8 @@ def main() -> None:
         "wall_time_s": round(wall, 1),
         "distance_m": distance,
         "coverage": hist[-1]["coverage"] if hist else 0.0,
-        "collisions": len(sim.collisions),
+        "collisions": len(sim.collisions),  # simulation steps in contact
+        "collision_events": collision_events(sim.collisions),
         "vo_final_xy_error_m": float(err[-1]),
         "vo_drift_pct": float(100 * err[-1] / max(distance, 1e-9)),
         "trunks_start_aligned": match_points(trunks_w, layout.trunks[:, :2], 0.5),
