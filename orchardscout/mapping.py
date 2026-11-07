@@ -407,6 +407,12 @@ class Mapper:
             self.trunks.set_row_frame(self.row_theta, axis)
         self._axis_final = len(lm) >= 80 and ratio < 0.85
 
+    def row_direction(self) -> np.ndarray | None:
+        """Unit vector along the rows (map frame), once the row axis has been chosen."""
+        if self.row_theta is None or self._row_axis is None:
+            return None
+        return self._row_rotation()[self._row_axis].copy()
+
     def _row_rotation(self) -> np.ndarray:
         a = np.deg2rad(self.row_theta)
         return np.array([[np.cos(a), np.sin(a)], [-np.sin(a), np.cos(a)]])

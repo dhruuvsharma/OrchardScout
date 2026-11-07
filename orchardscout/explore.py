@@ -8,10 +8,12 @@ trunk landmarks). It never sees the simulator's ground truth.
   camera looks ahead, so they are checked before the drone gets there; plans are redone
   often). Shortest paths come from Dijkstra on an 8-connected grid graph.
 * Frontiers: known-free cells next to unknown cells, grouped into clusters.
-* Unknown extent: a frontier is *relevant* only if it is within ``relevance_radius`` of a
-  mapped trunk (or, before any tree is known, near the start). Open field beyond the
-  outermost rows therefore stops attracting the drone, and exploration ends by itself once
-  every relevant frontier is gone: the orchard and its edges have been seen.
+* Unknown extent: a frontier is *relevant* only if it is near a mapped trunk (or, before
+  the row spacing is known, near the start): within ``relevance_radius`` across the rows,
+  and within ``relevance_along`` along them, since rows continue past their last mapped tree.
+  Open field beside the outermost rows therefore stops attracting the drone, and
+  exploration ends by itself once every relevant frontier is gone: the orchard and its
+  edges have been seen.
 * Behaviour: a slow 360-degree look-around at the start; then fly to the nearest relevant
   frontier, turn to face the unknown area there, replan; stuck goals are blacklisted.
 """
@@ -49,6 +51,11 @@ class ExploreConfig:
     # ...or this many row spacings, if larger: always look at least one row beyond the
     # outermost mapped row (with 5.4 m rows a fixed 5 m radius missed an outer row)
     relevance_rows: float = 1.5
+    # Along the rows (once their direction is known) a frontier counts up to this far from a
+    # mapped tree: free space is mapped out to 8 m but trunks only to 5 m, so looking down a
+    # row from its last mapped tree pushes the frontier ~8 m out before the next trees are
+    # mapped. With the across-row radius only, a run stopped with a third of the rows unseen.
+    relevance_along: float = 8.0
     # m around the start: relevant until the row spacing has been measured. Free space is
     # mapped to 8 m but trunks only to 5 m, so in a sparse orchard the first frontier
     # ring can lie > 5 m from every mapped tree; without this the run stopped at once.
@@ -68,6 +75,9 @@ class ExploreConfig:
     # trunk that the safety layer refused.
     stall_steps: int = 1500
     stall_dist: float = 1.5  # m
+    # Stuck twice within this distance: back out along the clearest direction first.
+    escape_radius: float = 1.0  # m
+    escape_dist: float = 1.0  # m
     blacklist_radius: float = 1.5  # m around a goal that could not be reached
     window_margin: float = 12.0  # m around the seen area
     safety_radius: float = 0.45  # m: closer than this to a trunk centre -> back away
@@ -116,6 +126,9 @@ class Explorer:
         self._flown_since_spin = 0.0
         self._last_xy: np.ndarray | None = None
         self._track: list[np.ndarray] = []  # recent positions, for the watchdog
+        self.row_dir: np.ndarray | None = None  # unit vector along the rows, set by the caller
+        self._last_stuck_xy: np.ndarray | None = None
+        self.n_escapes = 0
         self._force_replan = False
 
     # ------------------------------------------------------------ planning
@@ -199,9 +212,8 @@ class Explorer:
 
         start = to_cell(xy)
         start = np.clip(start, 0, [H - 1, W - 1])
-        if obstacle[start[0], start[1]]:  # inside an inflated obstacle: use nearest open cell
-            d, (ii, jj) = ndimage.distance_transform_edt(obstacle, return_indices=True)
-            start = np.array([ii[start[0], start[1]], jj[start[0], start[1]]])
+        if obstacle[start[0], start[1]]:  # inside an inflated obstacle
+            start = self._exit_cell(xy, start, obstacle, obstacles, to_xy)
         far = None
         if len(obstacles):
             ctr = to_xy(np.argwhere(np.ones((H, W), bool)))
@@ -211,6 +223,16 @@ class Explorer:
         dist = dist.reshape(H, W)
 
         tree = cKDTree(trunks) if len(trunks) >= 3 else None
+        spacing_known = self.row_spacing is not None and np.isfinite(self.row_spacing)
+        radius = c.relevance_radius
+        if spacing_known:
+            radius = max(radius, c.relevance_rows * self.row_spacing)
+        stretch = None  # map frame -> row frame with the along-row axis shrunk
+        if tree is not None and self.row_dir is not None:
+            d_ = self.row_dir / np.linalg.norm(self.row_dir)
+            k = radius / max(c.relevance_along, radius)
+            stretch = np.array([d_ * k, [-d_[1], d_[0]]]).T
+            tree = cKDTree(trunks @ stretch)
         best = None
         fr_pts = []
         for lab in range(1, n_lab + 1):
@@ -218,13 +240,9 @@ class Explorer:
             if len(cells) < c.min_frontier_cells:
                 continue
             pts = to_xy(cells)
-            spacing_known = self.row_spacing is not None and np.isfinite(self.row_spacing)
             near = np.zeros(len(pts), bool)
             if tree is not None:
-                radius = c.relevance_radius
-                if spacing_known:
-                    radius = max(radius, c.relevance_rows * self.row_spacing)
-                near |= tree.query(pts)[0] <= radius
+                near |= tree.query(pts if stretch is None else pts @ stretch)[0] <= radius
             if tree is None or not spacing_known:
                 near |= np.linalg.norm(pts - self.start_xy, axis=1) <= c.start_radius
             if not near.any():
@@ -396,6 +414,15 @@ class Explorer:
                     self.blacklist.append(self.plan.goal.copy())
                 self.plan = None
                 self._hist.clear()
+                again = (self._last_stuck_xy is not None
+                         and np.linalg.norm(xy - self._last_stuck_xy) < c.escape_radius)
+                self._last_stuck_xy = xy.copy()
+                if again and len(obstacles):
+                    # stuck twice in the same place: back out along the clearest direction
+                    goal = xy + c.escape_dist * self._clearest_direction(xy, obstacles)
+                    self.plan = Plan(goal=goal, path=np.vstack([xy, goal]), cost=0.0, face=None)
+                    self.follower.set_path(self.plan.path)
+                    self.n_escapes += 1
                 return np.zeros(2), 0.0
             v, w = self.follower.command(xy[0], xy[1], yaw)
             if self.follower.done:
@@ -415,6 +442,43 @@ class Explorer:
             return np.inf
         p = self.follower.path
         return float(np.linalg.norm(p[0] - xy) + np.sum(np.linalg.norm(np.diff(p, axis=0), axis=1)))
+
+    def _exit_cell(self, xy: np.ndarray, start: np.ndarray, obstacle: np.ndarray,
+                   obstacles: np.ndarray, to_xy) -> np.ndarray:
+        """Open cell to leave an inflated obstacle by.
+
+        The nearest open cell can lie past a trunk; the safety layer then refuses the hop
+        and every replan repeats it (a camera-only run livelocked this way). Prefer the
+        nearest open cell whose straight hop never gets closer to a trunk than the drone is
+        now (or than the safety margin, if that is smaller).
+        """
+        c = self.cfg
+        _, (ii, jj) = ndimage.distance_transform_edt(obstacle, return_indices=True)
+        nearest = np.array([ii[start[0], start[1]], jj[start[0], start[1]]])
+        if len(obstacles) == 0:
+            return nearest
+        r = int(np.ceil(2.5 / c.plan_res))
+        i0, j0 = max(start[0] - r, 0), max(start[1] - r, 0)
+        cand = np.argwhere(~obstacle[i0:start[0] + r + 1, j0:start[1] + r + 1]) + [i0, j0]
+        if len(cand) == 0:
+            return nearest
+        pts = to_xy(cand)
+        order = np.argsort(np.linalg.norm(pts - xy, axis=1))
+        cand, pts = cand[order], pts[order]
+        kd = cKDTree(obstacles)
+        need = min(float(kd.query(xy)[0]), c.safety_radius + 0.1) - 0.02
+        t = np.linspace(0.1, 1.0, 10)
+        seg = xy + t[None, :, None] * (pts - xy)[:, None, :]
+        clear = kd.query(seg.reshape(-1, 2))[0].reshape(len(pts), -1).min(axis=1) >= need
+        return cand[int(np.argmax(clear))] if clear.any() else nearest
+
+    def _clearest_direction(self, xy: np.ndarray, obstacles: np.ndarray) -> np.ndarray:
+        a = np.linspace(0, 2 * np.pi, 24, endpoint=False)
+        dirs = np.column_stack([np.cos(a), np.sin(a)])
+        t = np.linspace(0.1, self.cfg.escape_dist + self.cfg.lookahead_check, 10)
+        seg = xy + t[None, :, None] * dirs[:, None, :]
+        clr = cKDTree(obstacles).query(seg.reshape(-1, 2))[0].reshape(len(a), -1).min(axis=1)
+        return dirs[int(np.argmax(clr))]
 
     def _stalled(self, xy: np.ndarray) -> bool:
         c = self.cfg

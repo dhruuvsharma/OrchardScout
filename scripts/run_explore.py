@@ -123,6 +123,7 @@ def main() -> None:
         samples = agent.mapper.row_spacing_samples()
         explorer.row_spacing = float(np.median(samples)) if len(samples) else None
         explorer.need_spacing = not agent.mapper.spacing_ready
+        explorer.row_dir = agent.mapper.row_direction()
         v, w = explorer.command(res.T_M_cam, agent.mapper.grid,
                                 agent.mapper.trunks.provisional(explorer.cfg.relevance_min_obs),
                                 agent.mapper.trunks.provisional(3))
@@ -209,6 +210,7 @@ def main() -> None:
         "fallback_plans": explorer.n_fallback,
         "final_spins": explorer.n_final_spins,
         "measure_spins": explorer.n_measure_spins,
+        "escapes": explorer.n_escapes,
         "spacing_samples": {"close_range_window": len(agent.mapper.local_row_spacing),
                             "single_frame": len(agent.mapper.frame_row_spacing)},
         **agent.timing_summary(),
