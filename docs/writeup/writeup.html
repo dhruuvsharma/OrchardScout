@@ -13,14 +13,14 @@
   ul { margin: 0 0 1.3mm; padding-left: 4.2mm; }
   li { margin: 0 0 0.6mm; }
   .cols { display: grid; grid-template-columns: 1.2fr 1fr; gap: 5mm; }
-  table { border-collapse: collapse; width: 100%; font-size: 7.4pt; margin: 0.4mm 0 0.6mm; }
-  th, td { border-bottom: 0.5pt solid #ddd; padding: 0.25mm 1mm; text-align: left; white-space: nowrap; }
+  table { border-collapse: collapse; width: 100%; font-size: 7pt; line-height: 1.2; margin: 0.4mm 0 0.6mm; }
+  th, td { border-bottom: 0.5pt solid #ddd; padding: 0.1mm 1mm; text-align: left; white-space: nowrap; }
   th { color: #444; font-weight: 600; vertical-align: bottom; }
   td.n, th.n { text-align: right; }
   tr.sep td { border-top: 0.9pt solid #9fb59a; }
   .bad { color: #b03030; font-weight: 600; }
   figure { margin: 0.5mm 0 1mm; }
-  figure img { width: 100%; border: 0.5pt solid #ccc; }
+  figure img { display: block; width: 84%; margin: 0 auto; border: 0.5pt solid #ccc; }
   figcaption { font-size: 7.3pt; color: #555; margin-top: 0.4mm; }
   .note { font-size: 7.4pt; color: #555; margin: 0; }
 </style>
@@ -78,8 +78,8 @@ random-walked; robust line fits fixed it.</li>
 </div>
 
 <h2>Results: autonomous runs, each on a new orchard</h2>
-<p>Final code. <b>Held-out</b>: five orchards never run before the code was frozen (an earlier
-held-out round found two failures, since fixed; those orchards joined the development set).
+<p>Final code. <b>Held-out</b>: ten orchards (two rounds of five) never run before the code was frozen; an
+earlier held-out round found two failures, since fixed, and its orchards joined the development set.
 <b>Camera</b>: the real system. <b>Perfect</b>: simulator depth and pose (upper bound). Red: wrong row count.</p>
 <!--RESULTS_TABLE-->
 
@@ -87,11 +87,13 @@ held-out round found two failures, since fixed; those orchards joined the develo
 <ul>
 <li>Simulation only (MuJoCo; Isaac Sim needs an RTX GPU). Next: Isaac Lab / PX4 and real orchard footage.</li>
 <li><b>Failures, camera only:</b> on the largest orchards (0.9&ndash;1.6&nbsp;km of flight) drift near
-the edges passed half a row spacing and added or dropped an edge row (large #1, #2): no loop
-closure yet, and re-seen rows are the natural constraint. A ~10&nbsp;% short spacing in wide
-alleys added a row (small #3, medium #3). One run livelocked beside a trunk (now ended by a
+the edges passed half a row spacing and added or dropped edge rows (large #1, #2, #3): no loop
+closure yet, and re-seen rows are the natural constraint. A 7&ndash;11&nbsp;% short spacing in wide
+alleys added a row (small #3, medium #3, medium #7). One run livelocked beside a trunk (now ended by a
 watchdog); its re-run touched a tree for 10&nbsp;s. <b>Perfect sensing:</b> one run stopped
-early (free space is mapped to 8&nbsp;m, trunks to 5&nbsp;m). Fixes are under evaluation.</li>
+early (free space is mapped to 8&nbsp;m, trunks to 5&nbsp;m). A revised explorer, run on all 21
+orchards afterwards, had none of these exploration failures in 42 runs and the same camera-only
+row count (15 of 21): the limit now is drift and depth, not exploration.</li>
 <li>Exploration is classical. Next: a learned exploration policy against this baseline, and
 an adversarial "environment agent" that generates orchards (lighting, fog, irregular rows,
 slopes) to find where camera-only navigation breaks.</li>

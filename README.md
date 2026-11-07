@@ -6,14 +6,16 @@ RGB camera. From the camera alone it estimates depth, tracks its own motion, map
 explores until it has seen the orchard's edges on every side (then stops by itself), and
 reports how big the orchard is: number of rows, row length, row spacing and overall extent.
 
-**Results (final code, camera only, fully autonomous).** On 5 held-out orchards that were
-never run before the code was frozen, the drone counted the rows exactly in 4 and was one
-row off in the largest (19 rows, 92 x 98 m). Over all 16 orchards, including the 11 used
-during development: rows exact in 12 of 16 and never off by more than 2; median error 3.0 %
-in row length and 4.9 % in orchard width; 99-100 % of every orchard observed; 7.6 km flown
-and one run touched a tree (10 s of contact). With perfect depth and pose in place of the
-camera pipeline, the same explorer counted the rows exactly in all 16. Every run, and every
-failure with its cause, is below.
+**Results (final code, camera only, fully autonomous).** On 10 held-out orchards, in two
+rounds of five that were never run before the code was frozen, the drone counted the rows
+exactly in 7; it was one row off on two and three rows off on one (a 19-row orchard,
+after 1.4 km of flight). Over all 21 orchards, including the 11 used during development:
+rows exact in 15 of 21 and never off by more than 3; median error 2.6 % in row length and
+6.6 % in orchard width; 99-100 % of every orchard observed; 10.5 km flown and one run
+touched a tree (10 s of contact). With perfect depth and pose in place of the camera
+pipeline, the same explorer counted the rows exactly in all 21. A revised explorer, tested
+afterwards, matched these row counts with no exploration failure at all. Every run, and
+every failure with its cause, is below.
 
 ![Exploring a medium orchard: onboard camera, monocular depth and the agent's live map](docs/images/demo.gif)
 
@@ -50,9 +52,12 @@ size-estimation logic.
 **Evaluation protocol.** The code was frozen and run on five orchards it had never seen
 (held-out round 1, at the end of this section). That round exposed two failures, so they
 were fixed and those five orchards became development orchards. The fixed code (commit
-`06541c7`) was frozen again and run on five *new* orchards (round 2). Every number below
-comes from that final code (one run used `4bc91dc`, which only adds a stall watchdog; see
-the failure cases), and round 1 is reported as it happened.
+`06541c7`) was frozen again and run on five *new* orchards (round 2). Five more new
+orchards (round 3) were generated later to test a revised explorer (end of this section);
+the final code was run on them unchanged, so they are a second held-out round for it. Every
+number below comes from that final code (the round-3 runs and one other used `4bc91dc`,
+which only adds a stall watchdog; see the failure cases), and round 1 is reported as it
+happened.
 
 **Held-out orchards, round 2** (never run before the final code was frozen):
 
@@ -68,6 +73,21 @@ the failure cases), and round 1 is reported as it happened.
 | medium #4: 11 rows, 55 x 59 m | alley | perfect depth + pose | 11 / 11 | -0.0 % | -0.4 % | -0.4 % | 712 | 100 % | 0 | 0.0 % | 1.00 / 0.94 |
 | medium #5: 11 rows, 64 x 45 m | edge | perfect depth + pose | 11 / 11 | -0.0 % | -0.3 % | -0.3 % | 505 | 100 % | 0 | 0.0 % | 1.00 / 0.82 |
 | large #2: 19 rows, 92 x 98 m | edge | perfect depth + pose | 19 / 19 | +0.0 % | -0.9 % | -0.9 % | 1658 | 100 % | 0 | 0.0 % | 1.00 / 0.91 |
+
+**Held-out orchards, round 3** (generated and run after the final code was frozen):
+
+| orchard (true size) | start | sensing | rows est / true | length err | width err | row spacing err | flown (m) | coverage | collisions | VO drift | trunk P / R |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| small #7: 6 rows, 33 x 27 m | alley | camera only | 6 / 6 | +2.4 % | -8.9 % | -8.9 % | 201 | 100 % | 0 | 2.4 % | 0.24 / 0.35 |
+| small #8: 6 rows, 34 x 20 m | edge | camera only | 6 / 6 | -0.8 % | -8.6 % | -8.6 % | 134 | 100 % | 0 | 1.5 % | 0.21 / 0.33 |
+| medium #6: 10 rows, 50 x 37 m | alley | camera only | 10 / 10 | -0.1 % | -9.4 % | -9.4 % | 345 | 100 % | 0 | 0.9 % | 0.15 / 0.23 |
+| medium #7: 12 rows, 66 x 59 m | edge | camera only | 13 / 12 | +3.1 % | +1.5 % | -6.9 % | 762 | 99 % | 0 | 1.4 % | 0.06 / 0.10 |
+| large #3: 19 rows, 89 x 97 m | alley | camera only | 22 / 19 | +4.6 % | +7.2 % | -8.2 % | 1449 | 100 % | 0 | 1.3 % | 0.06 / 0.09 |
+| small #7: 6 rows, 33 x 27 m | alley | perfect depth + pose | 6 / 6 | +0.2 % | +0.1 % | +0.1 % | 236 | 100 % | 0 | 0.0 % | 1.00 / 0.94 |
+| small #8: 6 rows, 34 x 20 m | edge | perfect depth + pose | 6 / 6 | -0.0 % | -1.1 % | -1.1 % | 146 | 100 % | 0 | 0.0 % | 1.00 / 0.90 |
+| medium #6: 10 rows, 50 x 37 m | alley | perfect depth + pose | 10 / 10 | +0.0 % | -0.9 % | -0.9 % | 377 | 100 % | 0 | 0.0 % | 1.00 / 0.94 |
+| medium #7: 12 rows, 66 x 59 m | edge | perfect depth + pose | 12 / 12 | +0.0 % | -0.8 % | -0.8 % | 692 | 100 % | 0 | 0.0 % | 1.00 / 0.91 |
+| large #3: 19 rows, 89 x 97 m | alley | perfect depth + pose | 19 / 19 | +0.0 % | -0.3 % | -0.3 % | 1312 | 100 % | 0 | 0.0 % | 1.00 / 0.82 |
 
 **Development orchards** (used while building the system, final code):
 
@@ -145,15 +165,11 @@ trunks; circles: true trunks; dotted box: the agent's size estimate.*
 
 | Run | What happened | Cause |
 |---|---|---|
-| large #1 and #2, camera only | 19 / 17 rows (width +10.7 %); 18 / 19 rows (width -12.1 %) | Flights of 0.9-1.6 km. Near the outer edges odometry drift grew past half a row spacing, so the row lattice placed part of an edge row on the next lattice line (an extra row, #1), or the map shrank until two top rows merged (#2). Needs loop closure. |
-| small #3, medium #3, camera only | 7 / 6 and 13 / 12 rows | Row spacing measured 10-11 % short (wide alleys, where depth is already compressed at 4 m); a shorter spacing fits one more row into the same width. |
+| large #1, #2 and #3 (round 3), camera only | 19 / 17 rows (width +10.7 %); 18 / 19 (width -12.1 %); 22 / 19 (width +7.2 %) | Flights of 0.9-1.6 km. Near the outer edges odometry drift grew past half a row spacing, so the row lattice placed part of an edge row on the next lattice line (extra rows: #1, and #3, which had 19 rows until 1.0 km and then 21 and 22), or the map shrank until two top rows merged (#2). Needs loop closure. |
+| small #3, medium #3, medium #7 (round 3), camera only | 7 / 6, 13 / 12 and 13 / 12 rows | Row spacing measured 7-11 % short (wide alleys, where depth is already compressed at 4 m); a shorter spacing fits one more row into the same width. The revised explorer below miscounted all three in the same way. |
 | small #1, perfect sensing | stopped with 75 % seen (length -41 %) | Free space is mapped out to 8 m but trunks only to 5 m. Looking down the rows from their last mapped trees pushed the frontier more than 5 m from any mapped tree, so it no longer counted. |
 | large #0, camera only, first attempt | livelocked after 585 m | Parked next to a trunk, every new plan began with the same short hop past it, which the safety layer refused. A watchdog (`4bc91dc`) now ends such a run as "stuck". |
 | large #0, camera only, second attempt | 10 s in contact with a tree | Not diagnosed: only the number of contact steps was logged. |
-
-Fixes for the two exploration failures (frontiers count farther along the rows; a safe
-way out of an inflated obstacle) and per-event collision logging are on branch
-`explorer-v2`, under evaluation on a new held-out set.
 
 ![Large orchard #1, camera only: an extra edge row from drift](docs/images/failure_large1_rows.png)
 *Large #1, camera only (19 rows counted, 17 true). Near the top and bottom edges the
@@ -163,6 +179,96 @@ the 3.4 m row spacing, and part of each outer row was mapped one row further out
 ![Small orchard #1, perfect sensing: exploration stopped early](docs/images/failure_small1_early_stop.png)
 *Small #1, perfect depth and pose: the drone mapped the right-hand 19 m of the 32 m rows and
 stopped; the unknown area (grey) to the left began just over 5 m from the nearest mapped tree.*
+
+### Tried after the freeze: a revised explorer
+
+After the runs above, the two exploration failures were fixed on branch
+[`explorer-v2`](https://github.com/dhruuvsharma/OrchardScout/tree/explorer-v2). Along the rows a
+frontier now counts up to 8 m from a mapped tree, because trunks are mapped only within 5 m and
+row ends kept slipping out of range. The drone leaves an inflated obstacle only by a hop that
+never passes closer to a trunk than it already is, and backs out along the clearest direction
+when it gets stuck twice in one place. Every contact with a tree is logged with its time and
+duration. It was run, unchanged, on all 21 orchards; round 3 was its held-out set.
+
+| | final code | `explorer-v2` |
+|---|---|---|
+| Perfect sensing: rows exact | 21 of 21 | 21 of 21 |
+| Perfect sensing: least of an orchard seen | 75 % (small #1 stopped early) | 100 % |
+| Camera only: rows exact | 15 of 21 | 15 of 21 |
+| Camera only, held-out round 3: rows exact | 3 of 5 | 4 of 5 |
+| Camera only: large orchards, rows exact | 1 of 4 | 4 of 4 |
+| Camera only: small and medium orchards, rows exact | 14 of 17 | 11 of 17 |
+| Camera only: largest row-count error | 3 | 2 |
+| Camera only: median length / width error | 2.6 % / 6.6 % | 5.2 % / 4.6 % |
+| Runs that stopped early, got stuck or touched a tree | 3 (small #1 stopped early; large #0 livelocked, and its re-run touched a tree) | none in 42 |
+
+It fixed what it was built for: in 42 runs it never stopped early, never got stuck and never
+touched a tree, and with perfect sensing it saw every orchard completely. With the camera it
+counted the rows exactly as often as the final code (15 of 21): better on the large orchards
+and on round 3, worse on the small and medium ones. Both versions miss for the same two
+reasons (row spacing measured short in wide alleys; odometry drift near the edges of long
+flights), and on small #3, medium #3 and medium #7 they made the same mistake. Each orchard
+was flown once and camera-only runs are not repeatable, so a difference of a few orchards is
+within run-to-run variation. The numbers in this README stay those of the frozen code;
+development continues from `explorer-v2`, which removes the exploration failures with the
+same row-count accuracy. What the comparison shows is where the limit now is: camera-only
+row counting is held back by drift and depth, not by the explorer.
+
+<details>
+<summary><b>explorer-v2: every run</b></summary>
+
+Development orchards and held-out round 2:
+
+| orchard (true size) | start | sensing | rows est / true | length err | width err | row spacing err | flown (m) | coverage | collisions | VO drift | trunk P / R |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| small #0: 6 rows, 23 x 16 m | alley | camera only | 5 / 6 | +12.7 % | -22.4 % | -3.0 % | 94 | 100 % | 0 | 6.5 % | 0.44 / 0.51 |
+| small #1: 5 rows, 32 x 14 m | edge | camera only | 5 / 5 | +5.6 % | -4.1 % | -4.0 % | 143 | 100 % | 0 | 1.2 % | 0.25 / 0.55 |
+| small #2: 6 rows, 24 x 27 m | alley | camera only | 6 / 6 | +15.4 % | -7.7 % | -7.7 % | 181 | 100 % | 0 | 2.8 % | 0.15 / 0.23 |
+| small #3: 6 rows, 21 x 27 m | alley | camera only | 7 / 6 | +7.4 % | +2.2 % | -14.8 % | 163 | 100 % | 0 | 4.7 % | 0.13 / 0.23 |
+| small #4: 6 rows, 28 x 30 m | edge | camera only | 6 / 6 | +1.0 % | -5.2 % | -5.2 % | 181 | 100 % | 0 | 0.3 % | 0.25 / 0.28 |
+| small #5: 6 rows, 32 x 23 m | alley | camera only | 6 / 6 | -0.5 % | -4.6 % | -4.6 % | 186 | 100 % | 0 | 0.5 % | 0.38 / 0.69 |
+| small #6: 5 rows, 24 x 16 m | edge | camera only | 5 / 5 | +5.2 % | -5.6 % | -5.6 % | 165 | 100 % | 0 | 0.7 % | 0.31 / 0.56 |
+| medium #0: 12 rows, 47 x 34 m | alley | camera only | 12 / 12 | -0.1 % | -3.7 % | -3.7 % | 377 | 100 % | 0 | 1.0 % | 0.30 / 0.38 |
+| medium #1: 10 rows, 68 x 31 m | edge | camera only | 10 / 10 | +0.5 % | -0.3 % | -0.3 % | 383 | 100 % | 0 | 3.9 % | 0.56 / 0.68 |
+| medium #2: 12 rows, 49 x 60 m | edge | camera only | 12 / 12 | +14.3 % | -6.5 % | -6.5 % | 626 | 100 % | 0 | 1.7 % | 0.07 / 0.10 |
+| medium #3: 12 rows, 45 x 59 m | alley | camera only | 13 / 12 | +13.9 % | +1.1 % | -7.4 % | 553 | 100 % | 0 | 0.5 % | 0.09 / 0.16 |
+| medium #4: 11 rows, 55 x 59 m | alley | camera only | 12 / 11 | +7.9 % | +4.2 % | -5.3 % | 765 | 100 % | 0 | 0.9 % | 0.13 / 0.20 |
+| medium #5: 11 rows, 64 x 45 m | edge | camera only | 13 / 11 | +2.8 % | +15.4 % | -3.9 % | 495 | 100 % | 0 | 2.2 % | 0.16 / 0.20 |
+| large #0: 19 rows, 90 x 56 m | alley | camera only | 19 / 19 | +4.0 % | +0.3 % | +0.3 % | 1195 | 100 % | 0 | 0.4 % | 0.19 / 0.26 |
+| large #1: 17 rows, 118 x 55 m | edge | camera only | 17 / 17 | +1.8 % | -0.5 % | -0.4 % | 879 | 98 % | 0 | 0.4 % | 0.07 / 0.08 |
+| large #2: 19 rows, 92 x 98 m | edge | camera only | 19 / 19 | +6.2 % | -5.8 % | -5.8 % | 1387 | 98 % | 0 | 1.1 % | 0.10 / 0.12 |
+| small #0: 6 rows, 23 x 16 m | alley | perfect depth + pose | 6 / 6 | +0.2 % | -0.3 % | -0.3 % | 99 | 100 % | 0 | 0.0 % | 1.00 / 0.95 |
+| small #1: 5 rows, 32 x 14 m | edge | perfect depth + pose | 5 / 5 | +0.0 % | -0.6 % | -0.6 % | 149 | 100 % | 0 | 0.0 % | 1.00 / 1.00 |
+| small #2: 6 rows, 24 x 27 m | alley | perfect depth + pose | 6 / 6 | +0.1 % | -0.2 % | -0.2 % | 229 | 100 % | 0 | 0.0 % | 1.00 / 1.00 |
+| small #3: 6 rows, 21 x 27 m | alley | perfect depth + pose | 6 / 6 | +0.3 % | +2.1 % | +2.1 % | 193 | 100 % | 0 | 0.0 % | 1.00 / 0.96 |
+| small #4: 6 rows, 28 x 30 m | edge | perfect depth + pose | 6 / 6 | +0.0 % | -0.4 % | -0.4 % | 317 | 100 % | 0 | 0.0 % | 1.00 / 0.96 |
+| small #5: 6 rows, 32 x 23 m | alley | perfect depth + pose | 6 / 6 | -0.0 % | -0.3 % | -0.3 % | 178 | 100 % | 0 | 0.0 % | 1.00 / 0.94 |
+| small #6: 5 rows, 24 x 16 m | edge | perfect depth + pose | 5 / 5 | +0.3 % | -0.5 % | -0.5 % | 118 | 100 % | 0 | 0.0 % | 1.00 / 0.97 |
+| medium #0: 12 rows, 47 x 34 m | alley | perfect depth + pose | 12 / 12 | +0.1 % | -1.2 % | -1.2 % | 383 | 100 % | 0 | 0.0 % | 1.00 / 0.95 |
+| medium #1: 10 rows, 68 x 31 m | edge | perfect depth + pose | 10 / 10 | -0.0 % | -0.2 % | -0.2 % | 415 | 100 % | 0 | 0.0 % | 1.00 / 0.87 |
+| medium #2: 12 rows, 49 x 60 m | edge | perfect depth + pose | 12 / 12 | +0.1 % | -0.4 % | -0.4 % | 472 | 100 % | 0 | 0.0 % | 1.00 / 0.92 |
+| medium #3: 12 rows, 45 x 59 m | alley | perfect depth + pose | 12 / 12 | -0.1 % | -0.6 % | -0.7 % | 491 | 100 % | 0 | 0.0 % | 1.00 / 0.89 |
+| medium #4: 11 rows, 55 x 59 m | alley | perfect depth + pose | 11 / 11 | -0.0 % | -0.2 % | -0.2 % | 709 | 100 % | 0 | 0.0 % | 1.00 / 0.94 |
+| medium #5: 11 rows, 64 x 45 m | edge | perfect depth + pose | 11 / 11 | +0.0 % | -0.5 % | -0.5 % | 543 | 100 % | 0 | 0.0 % | 1.00 / 0.85 |
+| large #0: 19 rows, 90 x 56 m | alley | perfect depth + pose | 19 / 19 | +0.0 % | -1.1 % | -1.1 % | 896 | 100 % | 0 | 0.0 % | 1.00 / 0.93 |
+| large #1: 17 rows, 118 x 55 m | edge | perfect depth + pose | 17 / 17 | -0.0 % | -0.2 % | -0.2 % | 929 | 100 % | 0 | 0.0 % | 1.00 / 0.88 |
+| large #2: 19 rows, 92 x 98 m | edge | perfect depth + pose | 19 / 19 | +0.0 % | -1.3 % | -1.3 % | 1496 | 100 % | 0 | 0.0 % | 1.00 / 0.92 |
+
+Held-out round 3:
+
+| orchard (true size) | start | sensing | rows est / true | length err | width err | row spacing err | flown (m) | coverage | collisions | VO drift | trunk P / R |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| small #7: 6 rows, 33 x 27 m | alley | camera only | 6 / 6 | -2.5 % | -7.9 % | -7.9 % | 247 | 100 % | 0 | 0.4 % | 0.14 / 0.24 |
+| small #8: 6 rows, 34 x 20 m | edge | camera only | 6 / 6 | -2.0 % | -4.7 % | -4.7 % | 178 | 100 % | 0 | 1.8 % | 0.13 / 0.22 |
+| medium #6: 10 rows, 50 x 37 m | alley | camera only | 10 / 10 | +3.8 % | -4.2 % | -4.2 % | 387 | 100 % | 0 | 1.1 % | 0.10 / 0.17 |
+| medium #7: 12 rows, 66 x 59 m | edge | camera only | 13 / 12 | +6.8 % | -2.0 % | -10.1 % | 905 | 99 % | 0 | 1.9 % | 0.06 / 0.10 |
+| large #3: 19 rows, 89 x 97 m | alley | camera only | 19 / 19 | +6.2 % | -4.8 % | -4.8 % | 1249 | 100 % | 0 | 0.5 % | 0.06 / 0.08 |
+| small #7: 6 rows, 33 x 27 m | alley | perfect depth + pose | 6 / 6 | +0.1 % | -1.5 % | -1.5 % | 237 | 100 % | 0 | 0.0 % | 1.00 / 0.87 |
+| small #8: 6 rows, 34 x 20 m | edge | perfect depth + pose | 6 / 6 | -0.7 % | -2.6 % | -2.6 % | 161 | 100 % | 0 | 0.0 % | 1.00 / 0.92 |
+| medium #6: 10 rows, 50 x 37 m | alley | perfect depth + pose | 10 / 10 | +0.0 % | -1.2 % | -1.2 % | 352 | 100 % | 0 | 0.0 % | 1.00 / 0.90 |
+| medium #7: 12 rows, 66 x 59 m | edge | perfect depth + pose | 12 / 12 | -0.0 % | -0.4 % | -0.4 % | 705 | 100 % | 0 | 0.0 % | 1.00 / 0.82 |
+| large #3: 19 rows, 89 x 97 m | alley | perfect depth + pose | 19 / 19 | +0.1 % | -0.9 % | -0.9 % | 1243 | 100 % | 0 | 0.0 % | 1.00 / 0.81 |
+</details>
 
 ### Component checks
 
@@ -330,7 +436,10 @@ docs/      figures, demo video, one-page write-up
   flight) drift near the edges can exceed half a row spacing and add or drop an edge row;
   re-seen rows are the natural loop-closure constraint. The raw trunk map also keeps
   duplicates, which the structure-based size estimate mostly ignores.
-* In wide alleys the measured row spacing can still come out ~10 % short, which adds a row.
+* In wide alleys (5 m and more) the measured row spacing can come out 7-11 % short, which
+  adds a row. Close-range depth or a learned depth correction for trunks is the fix to try.
+* Better exploration alone does not fix row counts: `explorer-v2` (above) removes the early
+  stop and the livelock but counts rows no better with the camera.
 * Metric scale relies on locally flat ground and a known flight height; the size estimate
   assumes straight, parallel rows (true of planted orchards, not of irregular groves).
 * Exploration is classical (frontiers). Natural next steps: a learned exploration policy
