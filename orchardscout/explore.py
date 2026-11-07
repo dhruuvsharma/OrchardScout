@@ -49,7 +49,13 @@ class ExploreConfig:
     # ...or this many row spacings, if larger: always look at least one row beyond the
     # outermost mapped row (with 5.4 m rows a fixed 5 m radius missed an outer row)
     relevance_rows: float = 1.5
-    start_radius: float = 10.0  # m around the start, before any tree is mapped
+    # m around the start: relevant until the row spacing has been measured. Free space is
+    # mapped to 8 m but trunks only to 5 m, so in a sparse orchard the first frontier
+    # ring can lie > 5 m from every mapped tree; without this the run stopped at once.
+    start_radius: float = 12.0
+    # While the spacing is unmeasured, arriving at a goal triggers a full look-around
+    # (both rows come within 4 m) instead of just facing the frontier, at most this often:
+    measure_every: float = 8.0  # m flown
     replan_every: int = 15  # steps
     switch_ratio: float = 0.7  # switch goals only if the new one is this much closer
     spin_rate: float = 0.6  # rad/s for look-arounds
@@ -99,6 +105,10 @@ class Explorer:
         self.n_fallback = 0
         self.n_final_spins = 0
         self.row_spacing: float | None = None  # measured by the mapper, set by the caller
+        self.need_spacing = False  # set by the caller while close-range spacing is scarce
+        self.n_measure_spins = 0
+        self._flown_since_spin = 0.0
+        self._last_xy: np.ndarray | None = None
         self._force_replan = False
 
     # ------------------------------------------------------------ planning
@@ -201,13 +211,15 @@ class Explorer:
             if len(cells) < c.min_frontier_cells:
                 continue
             pts = to_xy(cells)
+            spacing_known = self.row_spacing is not None and np.isfinite(self.row_spacing)
+            near = np.zeros(len(pts), bool)
             if tree is not None:
                 radius = c.relevance_radius
-                if self.row_spacing is not None and np.isfinite(self.row_spacing):
+                if spacing_known:
                     radius = max(radius, c.relevance_rows * self.row_spacing)
-                near = tree.query(pts)[0] <= radius
-            else:
-                near = np.linalg.norm(pts - self.start_xy, axis=1) <= c.start_radius
+                near |= tree.query(pts)[0] <= radius
+            if tree is None or not spacing_known:
+                near |= np.linalg.norm(pts - self.start_xy, axis=1) <= c.start_radius
             if not near.any():
                 continue
             cells, pts = cells[near], pts[near]
@@ -327,6 +339,10 @@ class Explorer:
                 self.plan = None
                 self._hist.clear()
 
+        if self._last_xy is not None:
+            self._flown_since_spin += float(np.linalg.norm(xy - self._last_xy))
+        self._last_xy = xy.copy()
+
         if self.mode == self.FOLLOW:
             self._hist.append(xy)
             blocked = self._path_blocked(xy, obstacles)
@@ -373,6 +389,12 @@ class Explorer:
                 return np.zeros(2), 0.0
             v, w = self.follower.command(xy[0], xy[1], yaw)
             if self.follower.done:
+                if self.need_spacing and self._flown_since_spin >= c.measure_every:
+                    # look all around to see both neighbouring rows up close
+                    self.mode, self.spun, self.plan = self.SPIN, 0.0, None
+                    self._flown_since_spin = 0.0
+                    self.n_measure_spins += 1
+                    return np.zeros(2), c.spin_rate
                 self.mode = self.FACE
                 return np.zeros(2), 0.0
             return v, w

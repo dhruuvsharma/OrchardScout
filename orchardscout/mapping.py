@@ -433,16 +433,23 @@ class Mapper:
             du = np.diff(np.sort(u[g]))
             self.local_tree_spacing.extend(du[(du > 1.0) & (du < 5.0)].tolist())
 
+    @property
+    def spacing_ready(self) -> bool:
+        """Enough close-range row-spacing measurements to trust the spacing."""
+        return len(self.local_row_spacing) >= self.trunks.cfg.lattice_min_samples
+
     def row_spacing_samples(self) -> list[float]:
-        """Close-range windowed samples if there are enough, else single-frame ones."""
-        if len(self.local_row_spacing) >= self.trunks.cfg.lattice_min_samples:
-            return self.local_row_spacing
-        return self.frame_row_spacing
+        """Close-range windowed samples, or nothing until there are enough of them.
+
+        Single-frame samples are biased short in wide alleys (-10 to -16 %), and the row
+        lattice would then force that wrong spacing onto the map and create extra rows,
+        so they are kept for diagnostics only.
+        """
+        return self.local_row_spacing if self.spacing_ready else []
 
     def tree_spacing_samples(self) -> list[float]:
-        if len(self.local_tree_spacing) >= self.trunks.cfg.lattice_min_samples:
-            return self.local_tree_spacing
-        return self.frame_tree_spacing
+        ok = len(self.local_tree_spacing) >= self.trunks.cfg.lattice_min_samples
+        return self.local_tree_spacing if ok else []
 
     def _measure_local_spacing(self, dets: np.ndarray, cam_xy: np.ndarray) -> list[float]:
         """Row and tree spacing from the trunks seen in one frame (within ~5 m).

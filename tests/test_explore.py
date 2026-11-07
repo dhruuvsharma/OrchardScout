@@ -30,6 +30,7 @@ def test_no_relevant_frontier_means_explored():
     g = _grid_with_free_box(-5, 5, -5, 5)
     far_tree = np.array([[40.0, 40.0]] * 3) + np.arange(3)[:, None]
     ex = Explorer(ExploreConfig(relevance_radius=3.0, final_spins=1))
+    ex.row_spacing = 2.0  # spacing known: only frontiers near trees count
     ex.mode = ex.FOLLOW
     T = np.eye(4)
     T[:3, 2] = [1.0, 0.0, 0.0]
@@ -40,6 +41,16 @@ def test_no_relevant_frontier_means_explored():
         if ex.done:
             break
     assert ex.done and ex.status == "explored" and ex.n_final_spins == 1
+
+
+def test_frontiers_near_the_start_count_until_spacing_is_known():
+    g = _grid_with_free_box(-5, 5, -5, 5)
+    trees = np.array([[2.0, 2.7], [-1.0, 2.7], [2.0, -2.7], [-1.0, -2.7]])  # > 5 m from edges
+    ex = Explorer(ExploreConfig(relevance_radius=1.0))
+    ex.start_xy = np.zeros(2)
+    assert ex._make_plan(np.zeros(2), g, trees, trees) is not None  # spacing unknown
+    ex.row_spacing = 0.5
+    assert ex._make_plan(np.zeros(2), g, trees, trees) is None  # only near-tree frontiers
 
 
 def test_safety_layer_backs_away_from_a_close_trunk():
